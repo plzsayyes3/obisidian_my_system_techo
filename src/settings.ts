@@ -15,13 +15,10 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Markdownフォルダ")
       .setDesc("手帳データを保存するVault内のフォルダ")
-      .addText((text) => text
-        .setPlaceholder("techo")
-        .setValue(this.plugin.settings.sourceFolder)
-        .onChange(async (value) => {
-          this.plugin.settings.sourceFolder = value.trim().replace(/^\/+|\/+$/g, "");
-          await this.plugin.saveSettings();
-        }));
+      .addText((text) => text.setPlaceholder("techo").setValue(this.plugin.settings.sourceFolder).onChange(async (value) => {
+        this.plugin.settings.sourceFolder = value.trim().replace(/^\/+|\/+$/g, "");
+        await this.plugin.saveSettings();
+      }));
 
     containerEl.createEl("h3", { text: "Google Calendar" });
     containerEl.createEl("p", { text: "読み取り専用でGoogle Calendarの予定を取得します。OAuthトークンはこのVaultのプラグインデータに保存され、GitHubには送信されません。" });
@@ -29,27 +26,19 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Google Client ID")
       .setDesc("Google Cloudで作成したOAuthクライアントのClient ID。Secretは入力しません。")
-      .addText((text) => text
-        .setPlaceholder("xxxx.apps.googleusercontent.com")
-        .setValue(this.plugin.settings.googleClientId)
-        .onChange(async (value) => {
-          this.plugin.settings.googleClientId = value.trim();
-          await this.plugin.saveSettings();
-        }));
+      .addText((text) => text.setPlaceholder("xxxx.apps.googleusercontent.com").setValue(this.plugin.settings.googleClientId).onChange(async (value) => {
+        this.plugin.settings.googleClientId = value.trim();
+        await this.plugin.saveSettings();
+      }));
 
     new Setting(containerEl)
       .setName("Calendar ID")
       .setDesc("取得するカレンダー。通常は primary。")
-      .addText((text) => text
-        .setPlaceholder("primary")
-        .setValue(this.plugin.settings.googleCalendarId)
-        .onChange(async (value) => {
-          this.plugin.settings.googleCalendarId = value.trim() || "primary";
-          await this.plugin.saveSettings();
-        }));
+      .addText((text) => text.setPlaceholder("primary").setValue(this.plugin.settings.googleCalendarId).onChange(async (value) => {
+        this.plugin.settings.googleCalendarId = value.trim() || "primary";
+        await this.plugin.saveSettings();
+      }));
 
-    // Google may return an access token without a refresh token on a later
-    // authorization, so either token proves that the OAuth flow completed.
     const tokens = this.plugin.settings.googleTokens;
     const isConnected = Boolean(tokens?.accessToken || tokens?.refreshToken);
 
@@ -66,13 +55,13 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
           }
           button.setDisabled(true);
           try {
+            new Notice("Google OAuth: 認証を開始します。");
             const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
-            if (!newTokens.accessToken && !newTokens.refreshToken) {
-              throw new Error("Google OAuthは完了しましたが、トークンを取得できませんでした。");
-            }
+            new Notice(`Google OAuth: トークン取得成功（access token: ${newTokens.accessToken ? "あり" : "なし"} / refresh token: ${newTokens.refreshToken ? "あり" : "なし"}）`);
+            if (!newTokens.accessToken) throw new Error("Google OAuthは完了しましたが、アクセストークンを取得できませんでした。");
             this.plugin.settings.googleTokens = newTokens;
             await this.plugin.saveSettings();
-            new Notice("Google Calendarに接続しました。");
+            new Notice(`Google Calendar: 設定保存完了（接続状態: ${this.plugin.settings.googleTokens?.accessToken ? "保存済み" : "未保存"}）`);
             this.display();
           } catch (error) {
             notifyGoogleError(error);
