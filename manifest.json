@@ -1,9 +1,9 @@
 {
   "id": "my-system-techo",
   "name": "My-system-Techo",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "minAppVersion": "1.0.0",
-  "description": "A minimal Markdown-backed calendar grid for Obsidian.",
+  "description": "A minimal Markdown-backed calendar grid for Obsidian with optional Google Calendar read-only integration.",
   "author": "My-system-Techo contributors",
   "authorUrl": "https://github.com/plzsayyes3/obisidian_my_system_techo",
   "isDesktopOnly": false,
