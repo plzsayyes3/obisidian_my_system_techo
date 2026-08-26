@@ -1,0 +1,17 @@
+{
+  "name": "obsidian-my-system-techo",
+  "version": "0.1.1",
+  "description": "My-system-Techo Obsidian plugin",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs development --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.20.2",
+    "obsidian": "^1.5.7",
+    "typescript": "^5.4.2"
+  }
+}
