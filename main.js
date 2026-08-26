@@ -58,12 +58,9 @@ function pkceChallenge(verifier) {
   const { createHash } = require("crypto");
   return base64url(createHash("sha256").update(verifier).digest());
 }
-function describeGoogleHttpError(error) {
-  const value = error;
-  const status = typeof value?.status === "number" ? value.status : void 0;
-  let body = value?.text ?? value?.responseText ?? value?.body;
-  if (typeof body !== "string")
-    body = "";
+function describeGoogleResponse(response) {
+  const status = typeof response?.status === "number" ? response.status : void 0;
+  const body = typeof response?.text === "string" ? response.text : "";
   let parsed = void 0;
   if (body) {
     try {
@@ -73,8 +70,7 @@ function describeGoogleHttpError(error) {
   }
   const errorCode = typeof parsed?.error === "string" ? parsed.error : void 0;
   const errorDescription = typeof parsed?.error_description === "string" ? parsed.error_description : void 0;
-  const message = errorDescription || errorCode || (error instanceof Error ? error.message : String(error));
-  return { status, error: errorCode, errorDescription, message };
+  return { status, error: errorCode, errorDescription, message: errorDescription || errorCode || body || `HTTP ${status ?? "unknown"}` };
 }
 async function authorizeGoogle(clientId) {
   log("start");
@@ -150,19 +146,12 @@ async function authorizeGoogle(clientId) {
       });
     });
     log("token exchange started");
-    let response;
-    try {
-      response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString() });
-    } catch (error) {
-      const details = describeGoogleHttpError(error);
+    const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString(), throw: false });
+    const details = describeGoogleResponse(response);
+    log("token exchange response", { status: details.status, error: details.error, errorDescription: details.errorDescription });
+    if (details.status === void 0 || details.status < 200 || details.status >= 300) {
       log("token exchange failed", { status: details.status, error: details.error, errorDescription: details.errorDescription, message: details.message });
       throw new Error(`Google token exchange failed (${details.status ?? "unknown"}): ${details.message}`);
-    }
-    log("token exchange response", { status: response.status });
-    if (response.status < 200 || response.status >= 300) {
-      const details = describeGoogleHttpError(response);
-      log("token exchange failed", { status: response.status, error: details.error, errorDescription: details.errorDescription });
-      throw new Error(`Google token exchange failed (${response.status}): ${details.message}`);
     }
     const data = response.json;
     log("token fields received", { accessToken: Boolean(data.access_token), refreshToken: Boolean(data.refresh_token), expiresIn: Boolean(data.expires_in) });
