@@ -43,7 +43,7 @@ var import_obsidian = require("obsidian");
 var AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 var TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 var CALENDAR_ENDPOINT = "https://www.googleapis.com/calendar/v3";
-var SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+var SCOPE = "https://www.googleapis.com/auth/calendar.events";
 var LOG_PREFIX = "[My-system-Techo][Google OAuth]";
 function log(message, data) {
   console.log(LOG_PREFIX, message, data ?? "");
