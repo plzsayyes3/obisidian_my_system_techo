@@ -1,0 +1,12 @@
+{
+  "id": "my-system-techo",
+  "name": "My-system-Techo",
+  "version": "0.1.1",
+  "minAppVersion": "1.0.0",
+  "description": "Yearly, monthly, and weekly techo views with configurable display formats and Google Calendar integration.",
+  "author": "My-system-Techo contributors",
+  "authorUrl": "https://github.com/plzsayyes3/obisidian_my_system_techo",
+  "isDesktopOnly": false,
+  "main": "main.js",
+  "styles": "styles.css"
+}
