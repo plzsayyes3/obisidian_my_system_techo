@@ -16,6 +16,13 @@ export interface MySystemTechoSettings {
   scope: TechoScope;
   year: number;
   month: number;
+  googleClientId: string;
+  googleCalendarId: string;
+  googleTokens?: {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt: number;
+  };
 }
 
 export const DEFAULT_SETTINGS: MySystemTechoSettings = {
@@ -23,4 +30,6 @@ export const DEFAULT_SETTINGS: MySystemTechoSettings = {
   scope: "month",
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
+  googleClientId: "",
+  googleCalendarId: "primary",
 };
