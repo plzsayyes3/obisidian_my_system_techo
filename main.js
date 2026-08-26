@@ -43,6 +43,10 @@ var AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 var TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 var CALENDAR_ENDPOINT = "https://www.googleapis.com/calendar/v3";
 var SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+var LOG_PREFIX = "[My-system-Techo][Google OAuth]";
+function log(message, data) {
+  console.log(LOG_PREFIX, message, data ?? "");
+}
 function base64url(bytes) {
   return Buffer.from(bytes).toString("base64url");
 }
@@ -55,15 +59,14 @@ function pkceChallenge(verifier) {
   return base64url(createHash("sha256").update(verifier).digest());
 }
 async function authorizeGoogle(clientId) {
+  log("start");
   if (!clientId.trim())
     throw new Error("Google Client ID is not configured.");
   if (!window.require)
     throw new Error("Google OAuth\u306F\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248Obsidian\u3067\u5229\u7528\u3067\u304D\u307E\u3059\u3002\u30E2\u30D0\u30A4\u30EB\u7248\u306E\u8A8D\u8A3C\u306F\u6B21\u306E\u6BB5\u968E\u3067\u5BFE\u5FDC\u3057\u307E\u3059\u3002");
   const http = require("http");
   const { shell } = window.require("electron");
-  const verifier = randomString(48);
-  const challenge = pkceChallenge(verifier);
-  const state = randomString(24);
+  const verifier = randomString(48), challenge = pkceChallenge(verifier), state = randomString(24);
   const server = http.createServer();
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -73,6 +76,7 @@ async function authorizeGoogle(clientId) {
   if (!address || typeof address === "string")
     throw new Error("Could not start OAuth callback server.");
   const redirectUri = `http://127.0.0.1:${address.port}`;
+  log("callback server ready", { redirectUri });
   const authUrl = new URL(AUTH_ENDPOINT);
   authUrl.searchParams.set("client_id", clientId.trim());
   authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -83,24 +87,31 @@ async function authorizeGoogle(clientId) {
   authUrl.searchParams.set("code_challenge", challenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
   authUrl.searchParams.set("state", state);
+  log("opening Google authorization page");
   await shell.openExternal(authUrl.toString());
   try {
     const code = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("Google OAuth timed out.")), 18e4);
+      const timeout = setTimeout(() => {
+        log("authorization timed out");
+        reject(new Error("Google OAuth timed out."));
+      }, 18e4);
       server.on("request", (req, res) => {
         try {
           const callbackUrl = new URL(req.url ?? "/", redirectUri);
           if (callbackUrl.pathname !== "/")
             return;
+          log("callback received");
           if (callbackUrl.searchParams.get("state") !== state) {
-            res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+            log("state validation failed");
+            res.writeHead(400);
             res.end("Invalid OAuth state.");
             reject(new Error("Invalid OAuth state."));
             return;
           }
           const error = callbackUrl.searchParams.get("error");
           if (error) {
-            res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+            log("Google returned an error", error);
+            res.writeHead(400);
             res.end("Google authorization was cancelled.");
             reject(new Error(`Google authorization failed: ${error}`));
             return;
@@ -109,42 +120,45 @@ async function authorizeGoogle(clientId) {
           if (!value)
             throw new Error("Google did not return an authorization code.");
           clearTimeout(timeout);
+          log("authorization code received");
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
           res.end("<html><body><p>Google Calendar connected. You can close this tab.</p></body></html>");
           resolve(value);
         } catch (error) {
           clearTimeout(timeout);
+          log("callback processing failed", error instanceof Error ? error.message : String(error));
           reject(error);
         }
       });
     });
-    const response = await (0, import_obsidian.requestUrl)({
-      url: TOKEN_ENDPOINT,
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString()
-    });
+    log("token exchange started");
+    const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString() });
+    log("token exchange response", { status: response.status });
     if (response.status < 200 || response.status >= 300)
       throw new Error(`Google token exchange failed (${response.status}).`);
     const data = response.json;
-    return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Date.now() + data.expires_in * 1e3 };
+    log("token fields received", { accessToken: Boolean(data.access_token), refreshToken: Boolean(data.refresh_token), expiresIn: Boolean(data.expires_in) });
+    if (!data.access_token || !data.expires_in)
+      throw new Error("Google OAuth completed, but no usable access token was returned.");
+    const tokens = { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Date.now() + data.expires_in * 1e3 };
+    log("authorization completed");
+    return tokens;
   } finally {
     server.close();
+    log("callback server closed");
   }
 }
 async function refreshGoogleToken(clientId, refreshToken) {
-  const response = await (0, import_obsidian.requestUrl)({
-    url: TOKEN_ENDPOINT,
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: clientId.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString()
-  });
+  log("refresh started");
+  const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString() });
+  log("refresh response", { status: response.status });
   if (response.status < 200 || response.status >= 300)
     throw new Error(`Google token refresh failed (${response.status}).`);
   const data = response.json;
   return { accessToken: data.access_token, refreshToken, expiresAt: Date.now() + data.expires_in * 1e3 };
 }
 async function listGoogleEvents(accessToken, calendarId, timeMin, timeMax) {
+  log("calendar request started", { calendarId, timeMin, timeMax });
   const url = new URL(`${CALENDAR_ENDPOINT}/calendars/${encodeURIComponent(calendarId)}/events`);
   url.searchParams.set("timeMin", timeMin);
   url.searchParams.set("timeMax", timeMax);
@@ -152,12 +166,15 @@ async function listGoogleEvents(accessToken, calendarId, timeMin, timeMax) {
   url.searchParams.set("orderBy", "startTime");
   url.searchParams.set("maxResults", "2500");
   const response = await (0, import_obsidian.requestUrl)({ url: url.toString(), headers: { Authorization: `Bearer ${accessToken}` } });
+  log("calendar response", { status: response.status });
   if (response.status < 200 || response.status >= 300)
     throw new Error(`Google Calendar request failed (${response.status}).`);
   const data = response.json;
+  log("calendar events received", { count: data.items?.length ?? 0 });
   return (data.items ?? []).map((event) => ({ id: event.id, summary: event.summary || "(\u7121\u984C)", start: event.start?.dateTime ?? event.start?.date ?? "", end: event.end?.dateTime ?? event.end?.date ?? "", allDay: !event.start?.dateTime }));
 }
 function notifyGoogleError(error) {
+  log("error", error instanceof Error ? error.message : String(error));
   new import_obsidian.Notice(error instanceof Error ? error.message : "Google Calendar\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002");
 }
 
