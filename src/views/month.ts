@@ -27,6 +27,7 @@ export class MonthGridView extends ItemView {
     const title = toolbar.createEl("strong", { text: monthLabel(this.year, this.month) });
     const next = toolbar.createEl("button", { text: "›" });
     const today = toolbar.createEl("button", { text: "今日" });
+    const googleAdd = toolbar.createEl("button", { text: "Google予定追加" });
     prev.onclick = async () => { await this.shift(-1); };
     next.onclick = async () => { await this.shift(1); };
     today.onclick = async () => {
@@ -36,6 +37,7 @@ export class MonthGridView extends ItemView {
       await this.plugin.saveSettings();
       await this.render();
     };
+    googleAdd.onclick = () => void this.plugin.addGoogleCalendarEvent();
 
     const data = await readFolder(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
     const byDate = new Map<string, TechoItem[]>();
@@ -59,8 +61,13 @@ export class MonthGridView extends ItemView {
       const date = `${this.year}-${pad2(this.month)}-${pad2(day)}`;
       cell.createDiv({ cls: "mst-day-number", text: String(day) });
       for (const item of byDate.get(date) ?? []) this.renderItem(cell, item);
-      const add = cell.createEl("button", { cls: "mst-add", text: "+" });
+      const actions = cell.createDiv({ cls: "mst-day-actions" });
+      const add = actions.createEl("button", { cls: "mst-add", text: "+" });
+      add.setAttr("aria-label", `${date} にローカル予定を追加`);
       add.onclick = () => void this.addItem(date);
+      const google = actions.createEl("button", { cls: "mst-add-google", text: "G+" });
+      google.setAttr("aria-label", `${date} にGoogle Calendar予定を追加`);
+      google.onclick = () => void this.plugin.addGoogleCalendarEvent(date);
     }
   }
 
