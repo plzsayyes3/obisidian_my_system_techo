@@ -23,9 +23,10 @@ function describeGoogleResponse(response: any): { status?: number; error?: strin
   return { status, error: errorCode, errorDescription, message: errorDescription || errorCode || body || `HTTP ${status ?? "unknown"}` };
 }
 
-export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
+export async function authorizeGoogle(clientId: string, clientSecret: string): Promise<GoogleTokens> {
   log("start");
   if (!clientId.trim()) throw new Error("Google Client ID is not configured.");
+  if (!clientSecret.trim()) throw new Error("Google Client Secret is not configured.");
   if (!(window as any).require) throw new Error("Google OAuthはデスクトップ版Obsidianで利用できます。モバイル版の認証は次の段階で対応します。");
   const http = require("http");
   const { shell } = (window as any).require("electron");
@@ -60,7 +61,7 @@ export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
       });
     });
     log("token exchange started");
-    const response: any = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString(), throw: false });
+    const response: any = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString(), throw: false });
     const details = describeGoogleResponse(response);
     log("token exchange response", { status: details.status, error: details.error, errorDescription: details.errorDescription });
     if (details.status === undefined || details.status < 200 || details.status >= 300) {
@@ -76,9 +77,9 @@ export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
   } finally { server.close(); log("callback server closed"); }
 }
 
-export async function refreshGoogleToken(clientId: string, refreshToken: string): Promise<GoogleTokens> {
+export async function refreshGoogleToken(clientId: string, clientSecret: string, refreshToken: string): Promise<GoogleTokens> {
   log("refresh started");
-  const response = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString() });
+  const response = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString() });
   log("refresh response", { status: response.status });
   if (response.status < 200 || response.status >= 300) throw new Error(`Google token refresh failed (${response.status}).`);
   const data = response.json as { access_token: string; expires_in: number };
