@@ -31,6 +31,7 @@ var DEFAULT_SETTINGS = {
   year: (/* @__PURE__ */ new Date()).getFullYear(),
   month: (/* @__PURE__ */ new Date()).getMonth() + 1,
   googleClientId: "",
+  googleClientSecret: "",
   googleCalendarId: "primary"
 };
 
