@@ -3,7 +3,7 @@ import { Notice, requestUrl } from "obsidian";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const CALENDAR_ENDPOINT = "https://www.googleapis.com/calendar/v3";
-const SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const SCOPE = "https://www.googleapis.com/auth/calendar.events";
 const LOG_PREFIX = "[My-system-Techo][Google OAuth]";
 
 export interface GoogleTokens { accessToken: string; refreshToken?: string; expiresAt: number; }
@@ -95,6 +95,29 @@ export async function listGoogleEvents(accessToken: string, calendarId: string, 
   const data = response.json as { items?: Array<{ id: string; summary?: string; start?: { date?: string; dateTime?: string }; end?: { date?: string; dateTime?: string } }> };
   log("calendar events received", { count: data.items?.length ?? 0 });
   return (data.items ?? []).map((event) => ({ id: event.id, summary: event.summary || "(無題)", start: event.start?.dateTime ?? event.start?.date ?? "", end: event.end?.dateTime ?? event.end?.date ?? "", allDay: !event.start?.dateTime }));
+}
+
+export async function createGoogleEvent(accessToken: string, calendarId: string, title: string, start: Date, end: Date): Promise<{ id: string; htmlLink?: string }> {
+  log("calendar event create started", { calendarId, title, start: start.toISOString(), end: end.toISOString() });
+  const url = new URL(`${CALENDAR_ENDPOINT}/calendars/${encodeURIComponent(calendarId)}/events`);
+  url.searchParams.set("sendUpdates", "none");
+  const response = await requestUrl({
+    url: url.toString(),
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ summary: title, start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() } }),
+    throw: false,
+  });
+  log("calendar event create response", { status: response.status });
+  if (response.status < 200 || response.status >= 300) {
+    const details = describeGoogleResponse(response);
+    log("calendar event create failed", details);
+    throw new Error(`Google Calendar event creation failed (${details.status ?? "unknown"}): ${details.message}`);
+  }
+  const data = response.json as { id?: string; htmlLink?: string };
+  if (!data.id) throw new Error("Google Calendar event was created but no event ID was returned.");
+  log("calendar event created", { id: data.id });
+  return { id: data.id, htmlLink: data.htmlLink };
 }
 
 export function notifyGoogleError(error: unknown): void { log("error", error instanceof Error ? error.message : String(error)); new Notice(error instanceof Error ? error.message : "Google Calendarとの通信に失敗しました。"); }
