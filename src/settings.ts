@@ -1,5 +1,6 @@
-import { PluginSettingTab, Setting } from "obsidian";
+import { Notice, PluginSettingTab, Setting } from "obsidian";
 import type MySystemTechoPlugin from "./main";
+import { authorizeGoogle, notifyGoogleError } from "./google";
 
 export class MySystemTechoSettingTab extends PluginSettingTab {
   constructor(app: any, private plugin: MySystemTechoPlugin) {
@@ -21,5 +22,58 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
           this.plugin.settings.sourceFolder = value.trim().replace(/^\/+|\/+$/g, "");
           await this.plugin.saveSettings();
         }));
+
+    containerEl.createEl("h3", { text: "Google Calendar" });
+    containerEl.createEl("p", { text: "読み取り専用でGoogle Calendarの予定を取得します。OAuthトークンはこのVaultのプラグインデータに保存され、GitHubには送信されません。" });
+
+    new Setting(containerEl)
+      .setName("Google Client ID")
+      .setDesc("Google Cloudで作成したOAuthクライアントのClient ID。Secretは入力しません。")
+      .addText((text) => text
+        .setPlaceholder("xxxx.apps.googleusercontent.com")
+        .setValue(this.plugin.settings.googleClientId)
+        .onChange(async (value) => {
+          this.plugin.settings.googleClientId = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("Calendar ID")
+      .setDesc("取得するカレンダー。通常は primary。")
+      .addText((text) => text
+        .setPlaceholder("primary")
+        .setValue(this.plugin.settings.googleCalendarId)
+        .onChange(async (value) => {
+          this.plugin.settings.googleCalendarId = value.trim() || "primary";
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("Google Calendarに接続")
+      .setDesc("デスクトップ版ObsidianでGoogleの認証画面を開きます。")
+      .addButton((button) => button
+        .setButtonText(this.plugin.settings.googleTokens?.refreshToken ? "再認証" : "接続")
+        .setCta()
+        .onClick(async () => {
+          if (!this.plugin.settings.googleClientId) {
+            new Notice("先にGoogle Client IDを設定してください。");
+            return;
+          }
+          button.setDisabled(true);
+          try {
+            this.plugin.settings.googleTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+            await this.plugin.saveSettings();
+            new Notice("Google Calendarに接続しました。");
+            this.display();
+          } catch (error) {
+            notifyGoogleError(error);
+          } finally {
+            button.setDisabled(false);
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName("接続状態")
+      .setDesc(this.plugin.settings.googleTokens?.refreshToken ? "接続済み" : "未接続");
   }
 }
