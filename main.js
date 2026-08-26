@@ -194,13 +194,14 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       }
       button.setDisabled(true);
       try {
+        new import_obsidian2.Notice("Google OAuth: \u8A8D\u8A3C\u3092\u958B\u59CB\u3057\u307E\u3059\u3002");
         const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
-        if (!newTokens.accessToken && !newTokens.refreshToken) {
-          throw new Error("Google OAuth\u306F\u5B8C\u4E86\u3057\u307E\u3057\u305F\u304C\u3001\u30C8\u30FC\u30AF\u30F3\u3092\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002");
-        }
+        new import_obsidian2.Notice(`Google OAuth: \u30C8\u30FC\u30AF\u30F3\u53D6\u5F97\u6210\u529F\uFF08access token: ${newTokens.accessToken ? "\u3042\u308A" : "\u306A\u3057"} / refresh token: ${newTokens.refreshToken ? "\u3042\u308A" : "\u306A\u3057"}\uFF09`);
+        if (!newTokens.accessToken)
+          throw new Error("Google OAuth\u306F\u5B8C\u4E86\u3057\u307E\u3057\u305F\u304C\u3001\u30A2\u30AF\u30BB\u30B9\u30C8\u30FC\u30AF\u30F3\u3092\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002");
         this.plugin.settings.googleTokens = newTokens;
         await this.plugin.saveSettings();
-        new import_obsidian2.Notice("Google Calendar\u306B\u63A5\u7D9A\u3057\u307E\u3057\u305F\u3002");
+        new import_obsidian2.Notice(`Google Calendar: \u8A2D\u5B9A\u4FDD\u5B58\u5B8C\u4E86\uFF08\u63A5\u7D9A\u72B6\u614B: ${this.plugin.settings.googleTokens?.accessToken ? "\u4FDD\u5B58\u6E08\u307F" : "\u672A\u4FDD\u5B58"}\uFF09`);
         this.display();
       } catch (error) {
         notifyGoogleError(error);
