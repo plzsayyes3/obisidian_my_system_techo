@@ -54,16 +54,34 @@ var MySystemTechoSettingTab = class extends import_obsidian.PluginSettingTab {
 var import_obsidian2 = require("obsidian");
 
 // src/data/markdown.ts
-var DATE_HEADING = /^#{1,6}\s+(\d{4})-(\d{2})-(\d{2})\s*$/;
-var ITEM = /^-\s+(?:\[([ xX])\]\s+)?(?:(\d{1,2}:\d{2})\s+)?(.+?)\s*$/;
+var MONTH_HEADING = /^#{1,6}\s+(\d{4})年(\d{1,2})月\s*$/;
+var ISO_DATE_HEADING = /^#{1,6}\s+(\d{4})-(\d{2})-(\d{2})\s*$/;
+var JP_DATE_HEADING = /^#{1,6}\s+(\d{1,2})月(\d{1,2})日(?:\([^)]*\))?\s*$/;
+var ITEM = /^-\s+(?:\[([ xX])\]\s+)?(?:(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)\s+)?(.+?)\s*$/;
 function parseMarkdown(text, filePath) {
   const lines = text.split(/\r?\n/);
   const items = [];
   let currentDate = "";
+  let currentYear = 0;
+  let currentMonth = 0;
   lines.forEach((line, index) => {
-    const heading = line.match(DATE_HEADING);
-    if (heading) {
-      currentDate = `${heading[1]}-${heading[2]}-${heading[3]}`;
+    const monthHeading = line.match(MONTH_HEADING);
+    if (monthHeading) {
+      currentYear = Number(monthHeading[1]);
+      currentMonth = Number(monthHeading[2]);
+      currentDate = "";
+      return;
+    }
+    const isoHeading = line.match(ISO_DATE_HEADING);
+    if (isoHeading) {
+      currentDate = `${isoHeading[1]}-${isoHeading[2]}-${isoHeading[3]}`;
+      currentYear = Number(isoHeading[1]);
+      currentMonth = Number(isoHeading[2]);
+      return;
+    }
+    const jpHeading = line.match(JP_DATE_HEADING);
+    if (jpHeading && currentYear && currentMonth === Number(jpHeading[1])) {
+      currentDate = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(Number(jpHeading[2])).padStart(2, "0")}`;
       return;
     }
     const match = line.match(ITEM);
@@ -98,7 +116,10 @@ async function readFolder(app, folder, year, month) {
 async function appendItem(app, file, item) {
   const current = await app.vault.read(file);
   const lines = current.split(/\r?\n/);
-  const headingIndex = lines.findIndex((line2) => line2.match(DATE_HEADING)?.slice(1).join("-") === item.date);
+  const isoHeading = `## ${item.date}`;
+  const dateParts = item.date.split("-").map(Number);
+  const jpHeading = `## ${dateParts[1]}\u6708${dateParts[2]}\u65E5`;
+  const headingIndex = lines.findIndex((line2) => line2.trim() === isoHeading || line2.trim() === jpHeading || line2.match(JP_DATE_HEADING)?.[0] === line2.trim() && line2.includes(`${dateParts[1]}\u6708${dateParts[2]}\u65E5`));
   const prefix = item.kind === "task" ? `- [${item.checked ? "x" : " "}] ` : "- ";
   const line = `${prefix}${item.time ? `${item.time} ` : ""}${item.title}`;
   if (headingIndex >= 0)
@@ -106,12 +127,15 @@ async function appendItem(app, file, item) {
   else {
     if (lines.length && lines[lines.length - 1] !== "")
       lines.push("");
-    lines.push(`## ${item.date}`, line);
+    lines.push(isoHeading, line);
   }
   await app.vault.modify(file, lines.join("\n"));
 }
 async function createMarkdownFile(app, path, date) {
-  const content = `## ${date}
+  const [year, month, day] = date.split("-").map(Number);
+  const content = `# ${year}\u5E74${month}\u6708
+
+## ${month}\u6708${day}\u65E5
 `;
   return app.vault.create(path, content);
 }
