@@ -1,0 +1,14 @@
+node_modules/
+build/
+.DS_Store
+*.log
+
+# Obsidian/plugin runtime data - never publish local settings or credentials
+data.json
+.obsidian/
+
+# Local OAuth credentials
+*.token
+*.secret
+.env
+.env.*
