@@ -1,21 +1,26 @@
 export type TechoScope = "year" | "month" | "week";
+export type ItemKind = "event" | "task";
 
-export type TechoStyle =
-  | "techo-year"
-  | "month-block"
-  | "month-list"
-  | "month-block-series"
-  | "month-chronos"
-  | "week-vertical"
-  | "week-block";
+export interface TechoItem {
+  id: string;
+  date: string;
+  time?: string;
+  title: string;
+  kind: ItemKind;
+  checked: boolean;
+  sourceLine: number;
+}
 
 export interface MySystemTechoSettings {
+  sourceFolder: string;
   scope: TechoScope;
-  style: TechoStyle;
-  // Google settings intentionally excluded from this public baseline.
+  year: number;
+  month: number;
 }
 
 export const DEFAULT_SETTINGS: MySystemTechoSettings = {
+  sourceFolder: "techo",
   scope: "month",
-  style: "month-block",
+  year: new Date().getFullYear(),
+  month: new Date().getMonth() + 1,
 };
