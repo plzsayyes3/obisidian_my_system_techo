@@ -185,7 +185,8 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       this.plugin.settings.googleCalendarId = value.trim() || "primary";
       await this.plugin.saveSettings();
     }));
-    const isConnected = Boolean(this.plugin.settings.googleTokens?.accessToken);
+    const tokens = this.plugin.settings.googleTokens;
+    const isConnected = Boolean(tokens?.accessToken || tokens?.refreshToken);
     new import_obsidian2.Setting(containerEl).setName("Google Calendar\u306B\u63A5\u7D9A").setDesc("\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248Obsidian\u3067Google\u306E\u8A8D\u8A3C\u753B\u9762\u3092\u958B\u304D\u307E\u3059\u3002").addButton((button) => button.setButtonText(isConnected ? "\u518D\u8A8D\u8A3C" : "\u63A5\u7D9A").setCta().onClick(async () => {
       if (!this.plugin.settings.googleClientId) {
         new import_obsidian2.Notice("\u5148\u306BGoogle Client ID\u3092\u8A2D\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
@@ -193,8 +194,11 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       }
       button.setDisabled(true);
       try {
-        const tokens = await authorizeGoogle(this.plugin.settings.googleClientId);
-        this.plugin.settings.googleTokens = tokens;
+        const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+        if (!newTokens.accessToken && !newTokens.refreshToken) {
+          throw new Error("Google OAuth\u306F\u5B8C\u4E86\u3057\u307E\u3057\u305F\u304C\u3001\u30C8\u30FC\u30AF\u30F3\u3092\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002");
+        }
+        this.plugin.settings.googleTokens = newTokens;
         await this.plugin.saveSettings();
         new import_obsidian2.Notice("Google Calendar\u306B\u63A5\u7D9A\u3057\u307E\u3057\u305F\u3002");
         this.display();
