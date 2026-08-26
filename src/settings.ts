@@ -21,7 +21,7 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
       }));
 
     containerEl.createEl("h3", { text: "Google Calendar" });
-    containerEl.createEl("p", { text: "読み取り専用でGoogle Calendarの予定を取得します。OAuthトークンとClient SecretはこのVaultのプラグインデータに保存され、GitHubには送信されません。" });
+    containerEl.createEl("p", { text: "Google Calendarの予定を取得・追加します。OAuthトークンとClient SecretはこのVaultのプラグインデータに保存され、GitHubには送信されません。予定の追加には再認証が必要です。" });
 
     new Setting(containerEl)
       .setName("Google Client ID")
@@ -41,7 +41,7 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Calendar ID")
-      .setDesc("取得するカレンダー。通常は primary。")
+      .setDesc("取得・追加するカレンダー。通常は primary。")
       .addText((text) => text.setPlaceholder("primary").setValue(this.plugin.settings.googleCalendarId).onChange(async (value) => {
         this.plugin.settings.googleCalendarId = value.trim() || "primary";
         await this.plugin.saveSettings();
@@ -52,7 +52,7 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Google Calendarに接続")
-      .setDesc("デスクトップ版ObsidianでGoogleの認証画面を開きます。")
+      .setDesc("デスクトップ版ObsidianでGoogleの認証画面を開きます。読み取り・予定追加の権限を取得します。")
       .addButton((button) => button
         .setButtonText(isConnected ? "再認証" : "接続")
         .setCta()
