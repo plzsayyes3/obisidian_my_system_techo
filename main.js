@@ -416,6 +416,7 @@ var MonthGridView = class extends import_obsidian3.ItemView {
     const title = toolbar.createEl("strong", { text: monthLabel(this.year, this.month) });
     const next = toolbar.createEl("button", { text: "\u203A" });
     const today = toolbar.createEl("button", { text: "\u4ECA\u65E5" });
+    const googleAdd = toolbar.createEl("button", { text: "Google\u4E88\u5B9A\u8FFD\u52A0" });
     prev.onclick = async () => {
       await this.shift(-1);
     };
@@ -429,6 +430,7 @@ var MonthGridView = class extends import_obsidian3.ItemView {
       await this.plugin.saveSettings();
       await this.render();
     };
+    googleAdd.onclick = () => void this.plugin.addGoogleCalendarEvent();
     const data = await readFolder(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
     const byDate = /* @__PURE__ */ new Map();
     for (const entry of data)
@@ -454,8 +456,13 @@ var MonthGridView = class extends import_obsidian3.ItemView {
       cell.createDiv({ cls: "mst-day-number", text: String(day) });
       for (const item of byDate.get(date) ?? [])
         this.renderItem(cell, item);
-      const add = cell.createEl("button", { cls: "mst-add", text: "+" });
+      const actions = cell.createDiv({ cls: "mst-day-actions" });
+      const add = actions.createEl("button", { cls: "mst-add", text: "+" });
+      add.setAttr("aria-label", `${date} \u306B\u30ED\u30FC\u30AB\u30EB\u4E88\u5B9A\u3092\u8FFD\u52A0`);
       add.onclick = () => void this.addItem(date);
+      const google = actions.createEl("button", { cls: "mst-add-google", text: "G+" });
+      google.setAttr("aria-label", `${date} \u306BGoogle Calendar\u4E88\u5B9A\u3092\u8FFD\u52A0`);
+      google.onclick = () => void this.plugin.addGoogleCalendarEvent(date);
     }
   }
   renderItem(cell, item) {
