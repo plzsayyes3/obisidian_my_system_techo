@@ -1,0 +1,60 @@
+name: Import current plugin
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feature/google-mobile-auth
+
+      - name: Import source files
+        run: |
+          set -euo pipefail
+          base='https://raw.githubusercontent.com/plzsayyes3/mynotebook/main/.obsidian-job/plugins/my-system-techo'
+          mkdir -p src
+          curl -fsSL "$base/src/main.ts" -o src/main.ts
+          curl -fsSL "$base/styles.css" -o styles.css
+          curl -fsSL "$base/esbuild.config.mjs" -o esbuild.config.mjs
+          curl -fsSL "$base/package.json" -o package.json
+          curl -fsSL "$base/package-lock.json" -o package-lock.json
+          curl -fsSL "$base/tsconfig.json" -o tsconfig.json
+
+      - name: Write sanitized manifest
+        run: |
+          cat > manifest.json <<'EOF'
+          {
+            "id": "my-system-techo",
+            "name": "My-system-Techo",
+            "version": "0.1.1",
+            "minAppVersion": "1.0.0",
+            "description": "Tabbed yearly/monthly/weekly views with configurable display formats.",
+            "author": "plzsayyes3",
+            "authorUrl": "https://github.com/plzsayyes3",
+            "isDesktopOnly": false,
+            "main": "main.js",
+            "styles": "styles.css"
+          }
+          EOF
+
+      - name: Remove personal/runtime files
+        run: |
+          rm -f data.json main.js.map
+          find . -type d -name node_modules -prune -exec rm -rf {} +
+          rm -f .obsidian/* 2>/dev/null || true
+
+      - name: Commit imported source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src styles.css esbuild.config.mjs package.json package-lock.json tsconfig.json manifest.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'chore: import current plugin source for public rebuild'
+          git push origin HEAD:feature/google-mobile-auth
