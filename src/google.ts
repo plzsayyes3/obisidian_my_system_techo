@@ -13,6 +13,19 @@ function base64url(bytes: Uint8Array): string { return Buffer.from(bytes).toStri
 function randomString(length = 32): string { const { randomBytes } = require("crypto"); return base64url(randomBytes(length)); }
 function pkceChallenge(verifier: string): string { const { createHash } = require("crypto"); return base64url(createHash("sha256").update(verifier).digest()); }
 
+function describeGoogleHttpError(error: unknown): { status?: number; error?: string; errorDescription?: string; message: string } {
+  const value = error as any;
+  const status = typeof value?.status === "number" ? value.status : undefined;
+  let body = value?.text ?? value?.responseText ?? value?.body;
+  if (typeof body !== "string") body = "";
+  let parsed: any = undefined;
+  if (body) { try { parsed = JSON.parse(body); } catch { /* Google may return non-JSON text. */ } }
+  const errorCode = typeof parsed?.error === "string" ? parsed.error : undefined;
+  const errorDescription = typeof parsed?.error_description === "string" ? parsed.error_description : undefined;
+  const message = errorDescription || errorCode || (error instanceof Error ? error.message : String(error));
+  return { status, error: errorCode, errorDescription, message };
+}
+
 export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
   log("start");
   if (!clientId.trim()) throw new Error("Google Client ID is not configured.");
@@ -50,9 +63,20 @@ export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
       });
     });
     log("token exchange started");
-    const response = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString() });
+    let response: any;
+    try {
+      response = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString() });
+    } catch (error) {
+      const details = describeGoogleHttpError(error);
+      log("token exchange failed", { status: details.status, error: details.error, errorDescription: details.errorDescription, message: details.message });
+      throw new Error(`Google token exchange failed (${details.status ?? "unknown"}): ${details.message}`);
+    }
     log("token exchange response", { status: response.status });
-    if (response.status < 200 || response.status >= 300) throw new Error(`Google token exchange failed (${response.status}).`);
+    if (response.status < 200 || response.status >= 300) {
+      const details = describeGoogleHttpError(response);
+      log("token exchange failed", { status: response.status, error: details.error, errorDescription: details.errorDescription });
+      throw new Error(`Google token exchange failed (${response.status}): ${details.message}`);
+    }
     const data = response.json as { access_token?: string; refresh_token?: string; expires_in?: number };
     log("token fields received", { accessToken: Boolean(data.access_token), refreshToken: Boolean(data.refresh_token), expiresIn: Boolean(data.expires_in) });
     if (!data.access_token || !data.expires_in) throw new Error("Google OAuth completed, but no usable access token was returned.");
