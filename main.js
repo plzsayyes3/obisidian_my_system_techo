@@ -236,7 +236,7 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       await this.plugin.saveSettings();
     }));
     containerEl.createEl("h3", { text: "Google Calendar" });
-    containerEl.createEl("p", { text: "\u8AAD\u307F\u53D6\u308A\u5C02\u7528\u3067Google Calendar\u306E\u4E88\u5B9A\u3092\u53D6\u5F97\u3057\u307E\u3059\u3002OAuth\u30C8\u30FC\u30AF\u30F3\u3068Client Secret\u306F\u3053\u306EVault\u306E\u30D7\u30E9\u30B0\u30A4\u30F3\u30C7\u30FC\u30BF\u306B\u4FDD\u5B58\u3055\u308C\u3001GitHub\u306B\u306F\u9001\u4FE1\u3055\u308C\u307E\u305B\u3093\u3002" });
+    containerEl.createEl("p", { text: "Google Calendar\u306E\u4E88\u5B9A\u3092\u53D6\u5F97\u30FB\u8FFD\u52A0\u3057\u307E\u3059\u3002OAuth\u30C8\u30FC\u30AF\u30F3\u3068Client Secret\u306F\u3053\u306EVault\u306E\u30D7\u30E9\u30B0\u30A4\u30F3\u30C7\u30FC\u30BF\u306B\u4FDD\u5B58\u3055\u308C\u3001GitHub\u306B\u306F\u9001\u4FE1\u3055\u308C\u307E\u305B\u3093\u3002\u4E88\u5B9A\u306E\u8FFD\u52A0\u306B\u306F\u518D\u8A8D\u8A3C\u304C\u5FC5\u8981\u3067\u3059\u3002" });
     new import_obsidian2.Setting(containerEl).setName("Google Client ID").setDesc("Google Cloud\u3067\u4F5C\u6210\u3057\u305FOAuth\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8\u306EClient ID").addText((text) => text.setPlaceholder("xxxx.apps.googleusercontent.com").setValue(this.plugin.settings.googleClientId).onChange(async (value) => {
       this.plugin.settings.googleClientId = value.trim();
       await this.plugin.saveSettings();
@@ -245,13 +245,13 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       this.plugin.settings.googleClientSecret = value.trim();
       await this.plugin.saveSettings();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Calendar ID").setDesc("\u53D6\u5F97\u3059\u308B\u30AB\u30EC\u30F3\u30C0\u30FC\u3002\u901A\u5E38\u306F primary\u3002").addText((text) => text.setPlaceholder("primary").setValue(this.plugin.settings.googleCalendarId).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName("Calendar ID").setDesc("\u53D6\u5F97\u30FB\u8FFD\u52A0\u3059\u308B\u30AB\u30EC\u30F3\u30C0\u30FC\u3002\u901A\u5E38\u306F primary\u3002").addText((text) => text.setPlaceholder("primary").setValue(this.plugin.settings.googleCalendarId).onChange(async (value) => {
       this.plugin.settings.googleCalendarId = value.trim() || "primary";
       await this.plugin.saveSettings();
     }));
     const tokens = this.plugin.settings.googleTokens;
     const isConnected = Boolean(tokens?.accessToken || tokens?.refreshToken);
-    new import_obsidian2.Setting(containerEl).setName("Google Calendar\u306B\u63A5\u7D9A").setDesc("\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248Obsidian\u3067Google\u306E\u8A8D\u8A3C\u753B\u9762\u3092\u958B\u304D\u307E\u3059\u3002").addButton((button) => button.setButtonText(isConnected ? "\u518D\u8A8D\u8A3C" : "\u63A5\u7D9A").setCta().onClick(async () => {
+    new import_obsidian2.Setting(containerEl).setName("Google Calendar\u306B\u63A5\u7D9A").setDesc("\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248Obsidian\u3067Google\u306E\u8A8D\u8A3C\u753B\u9762\u3092\u958B\u304D\u307E\u3059\u3002\u8AAD\u307F\u53D6\u308A\u30FB\u4E88\u5B9A\u8FFD\u52A0\u306E\u6A29\u9650\u3092\u53D6\u5F97\u3057\u307E\u3059\u3002").addButton((button) => button.setButtonText(isConnected ? "\u518D\u8A8D\u8A3C" : "\u63A5\u7D9A").setCta().onClick(async () => {
       if (!this.plugin.settings.googleClientId) {
         new import_obsidian2.Notice("\u5148\u306BGoogle Client ID\u3092\u8A2D\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
         return;
