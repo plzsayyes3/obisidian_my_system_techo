@@ -1,23 +1,40 @@
-name: Build plugin
+name: Build and release plugin
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  build-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           package-manager-cache: false
-      - run: npm install
-      - run: npm run build
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Validate release files
+        run: |
+          test -f manifest.json
+          test -f main.js
+          test -f styles.css
+
+      - name: Read version
+        id: version
+        run: echo "version=$(node -p \"require('./manifest.json').version\")" >> "$GITHUB_OUTPUT"
+
       - name: Commit generated main.js
         run: |
           git config user.name "github-actions[bot]"
@@ -28,4 +45,19 @@ jobs:
           else
             git commit -m "build: update main.js"
             git push
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+          else
+            gh release create "$TAG" manifest.json main.js styles.css \
+              --target main \
+              --title "$TAG" \
+              --generate-notes \
+              --prerelease
           fi
