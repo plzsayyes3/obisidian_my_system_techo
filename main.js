@@ -185,14 +185,16 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       this.plugin.settings.googleCalendarId = value.trim() || "primary";
       await this.plugin.saveSettings();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Google Calendar\u306B\u63A5\u7D9A").setDesc("\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248Obsidian\u3067Google\u306E\u8A8D\u8A3C\u753B\u9762\u3092\u958B\u304D\u307E\u3059\u3002").addButton((button) => button.setButtonText(this.plugin.settings.googleTokens?.refreshToken ? "\u518D\u8A8D\u8A3C" : "\u63A5\u7D9A").setCta().onClick(async () => {
+    const isConnected = Boolean(this.plugin.settings.googleTokens?.accessToken);
+    new import_obsidian2.Setting(containerEl).setName("Google Calendar\u306B\u63A5\u7D9A").setDesc("\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248Obsidian\u3067Google\u306E\u8A8D\u8A3C\u753B\u9762\u3092\u958B\u304D\u307E\u3059\u3002").addButton((button) => button.setButtonText(isConnected ? "\u518D\u8A8D\u8A3C" : "\u63A5\u7D9A").setCta().onClick(async () => {
       if (!this.plugin.settings.googleClientId) {
         new import_obsidian2.Notice("\u5148\u306BGoogle Client ID\u3092\u8A2D\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
         return;
       }
       button.setDisabled(true);
       try {
-        this.plugin.settings.googleTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+        const tokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+        this.plugin.settings.googleTokens = tokens;
         await this.plugin.saveSettings();
         new import_obsidian2.Notice("Google Calendar\u306B\u63A5\u7D9A\u3057\u307E\u3057\u305F\u3002");
         this.display();
@@ -202,7 +204,7 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
         button.setDisabled(false);
       }
     }));
-    new import_obsidian2.Setting(containerEl).setName("\u63A5\u7D9A\u72B6\u614B").setDesc(this.plugin.settings.googleTokens?.refreshToken ? "\u63A5\u7D9A\u6E08\u307F" : "\u672A\u63A5\u7D9A");
+    new import_obsidian2.Setting(containerEl).setName("\u63A5\u7D9A\u72B6\u614B").setDesc(isConnected ? "\u63A5\u7D9A\u6E08\u307F" : "\u672A\u63A5\u7D9A");
   }
 };
 
