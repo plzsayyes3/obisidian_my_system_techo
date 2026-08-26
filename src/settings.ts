@@ -48,11 +48,13 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    const isConnected = Boolean(this.plugin.settings.googleTokens?.accessToken);
+
     new Setting(containerEl)
       .setName("Google Calendarに接続")
       .setDesc("デスクトップ版ObsidianでGoogleの認証画面を開きます。")
       .addButton((button) => button
-        .setButtonText(this.plugin.settings.googleTokens?.refreshToken ? "再認証" : "接続")
+        .setButtonText(isConnected ? "再認証" : "接続")
         .setCta()
         .onClick(async () => {
           if (!this.plugin.settings.googleClientId) {
@@ -61,7 +63,8 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
           }
           button.setDisabled(true);
           try {
-            this.plugin.settings.googleTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+            const tokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+            this.plugin.settings.googleTokens = tokens;
             await this.plugin.saveSettings();
             new Notice("Google Calendarに接続しました。");
             this.display();
@@ -74,6 +77,6 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("接続状態")
-      .setDesc(this.plugin.settings.googleTokens?.refreshToken ? "接続済み" : "未接続");
+      .setDesc(isConnected ? "接続済み" : "未接続");
   }
 }
