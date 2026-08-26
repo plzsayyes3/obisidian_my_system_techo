@@ -21,13 +21,21 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
       }));
 
     containerEl.createEl("h3", { text: "Google Calendar" });
-    containerEl.createEl("p", { text: "読み取り専用でGoogle Calendarの予定を取得します。OAuthトークンはこのVaultのプラグインデータに保存され、GitHubには送信されません。" });
+    containerEl.createEl("p", { text: "読み取り専用でGoogle Calendarの予定を取得します。OAuthトークンとClient SecretはこのVaultのプラグインデータに保存され、GitHubには送信されません。" });
 
     new Setting(containerEl)
       .setName("Google Client ID")
-      .setDesc("Google Cloudで作成したOAuthクライアントのClient ID。Secretは入力しません。")
+      .setDesc("Google Cloudで作成したOAuthクライアントのClient ID")
       .addText((text) => text.setPlaceholder("xxxx.apps.googleusercontent.com").setValue(this.plugin.settings.googleClientId).onChange(async (value) => {
         this.plugin.settings.googleClientId = value.trim();
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName("Google Client Secret")
+      .setDesc("Google Cloudの同じOAuthクライアントに表示されるClient Secret。GitHubには保存されません。")
+      .addText((text) => text.setPlaceholder("GOCSPX-...").setValue(this.plugin.settings.googleClientSecret).onChange(async (value) => {
+        this.plugin.settings.googleClientSecret = value.trim();
         await this.plugin.saveSettings();
       }));
 
@@ -53,10 +61,14 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
             new Notice("先にGoogle Client IDを設定してください。");
             return;
           }
+          if (!this.plugin.settings.googleClientSecret) {
+            new Notice("先にGoogle Client Secretを設定してください。");
+            return;
+          }
           button.setDisabled(true);
           try {
             new Notice("Google OAuth: 認証を開始します。");
-            const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+            const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId, this.plugin.settings.googleClientSecret);
             new Notice(`Google OAuth: トークン取得成功（access token: ${newTokens.accessToken ? "あり" : "なし"} / refresh token: ${newTokens.refreshToken ? "あり" : "なし"}）`);
             if (!newTokens.accessToken) throw new Error("Google OAuthは完了しましたが、アクセストークンを取得できませんでした。");
             this.plugin.settings.googleTokens = newTokens;
