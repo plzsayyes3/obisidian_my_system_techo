@@ -17,6 +17,7 @@ export interface MySystemTechoSettings {
   year: number;
   month: number;
   googleClientId: string;
+  googleClientSecret: string;
   googleCalendarId: string;
   googleTokens?: {
     accessToken: string;
@@ -31,5 +32,6 @@ export const DEFAULT_SETTINGS: MySystemTechoSettings = {
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
   googleClientId: "",
+  googleClientSecret: "",
   googleCalendarId: "primary",
 };
