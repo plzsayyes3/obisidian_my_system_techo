@@ -1,6 +1,8 @@
 name: Import current plugin
 
 on:
+  push:
+    branches: [feature/google-mobile-auth]
   workflow_dispatch:
 
 permissions:
