@@ -38,7 +38,8 @@ export default class MySystemTechoPlugin extends Plugin {
       let accessToken = config.accessToken;
       if (config.expiresAt <= Date.now() + 60_000) {
         if (!config.refreshToken) throw new Error("Google refresh token is unavailable. Please reconnect.");
-        const refreshed = await refreshGoogleToken(this.settings.googleClientId, config.refreshToken);
+        if (!this.settings.googleClientSecret) throw new Error("Google Client Secret is unavailable. Please reconnect.");
+        const refreshed = await refreshGoogleToken(this.settings.googleClientId, this.settings.googleClientSecret, config.refreshToken);
         this.settings.googleTokens = refreshed;
         await this.saveSettings();
         accessToken = refreshed.accessToken;
