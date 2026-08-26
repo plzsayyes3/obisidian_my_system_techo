@@ -193,6 +193,29 @@ async function listGoogleEvents(accessToken, calendarId, timeMin, timeMax) {
   log("calendar events received", { count: data.items?.length ?? 0 });
   return (data.items ?? []).map((event) => ({ id: event.id, summary: event.summary || "(\u7121\u984C)", start: event.start?.dateTime ?? event.start?.date ?? "", end: event.end?.dateTime ?? event.end?.date ?? "", allDay: !event.start?.dateTime }));
 }
+async function createGoogleEvent(accessToken, calendarId, title, start, end) {
+  log("calendar event create started", { calendarId, title, start: start.toISOString(), end: end.toISOString() });
+  const url = new URL(`${CALENDAR_ENDPOINT}/calendars/${encodeURIComponent(calendarId)}/events`);
+  url.searchParams.set("sendUpdates", "none");
+  const response = await (0, import_obsidian.requestUrl)({
+    url: url.toString(),
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ summary: title, start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() } }),
+    throw: false
+  });
+  log("calendar event create response", { status: response.status });
+  if (response.status < 200 || response.status >= 300) {
+    const details = describeGoogleResponse(response);
+    log("calendar event create failed", details);
+    throw new Error(`Google Calendar event creation failed (${details.status ?? "unknown"}): ${details.message}`);
+  }
+  const data = response.json;
+  if (!data.id)
+    throw new Error("Google Calendar event was created but no event ID was returned.");
+  log("calendar event created", { id: data.id });
+  return { id: data.id, htmlLink: data.htmlLink };
+}
 function notifyGoogleError(error) {
   log("error", error instanceof Error ? error.message : String(error));
   new import_obsidian.Notice(error instanceof Error ? error.message : "Google Calendar\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002");
@@ -473,6 +496,7 @@ var MySystemTechoPlugin = class extends import_obsidian4.Plugin {
     this.addRibbonIcon("calendar-days", "My-system-Techo", () => void this.activateView());
     this.addCommand({ id: "open-month-grid", name: "Open month grid", callback: () => void this.activateView() });
     this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar", callback: () => void this.syncGoogleCalendar() });
+    this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
   }
   async saveSettings() {
@@ -484,29 +508,65 @@ var MySystemTechoPlugin = class extends import_obsidian4.Plugin {
     await leaf.setViewState({ type: MONTH_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
-  async syncGoogleCalendar() {
+  async getGoogleAccessToken() {
     const config = this.settings.googleTokens;
-    if (!this.settings.googleClientId || !config?.accessToken) {
-      new import_obsidian4.Notice("Google Calendar\u304C\u63A5\u7D9A\u3055\u308C\u3066\u3044\u307E\u305B\u3093\u3002\u8A2D\u5B9A\u304B\u3089\u63A5\u7D9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
-      return;
-    }
+    if (!this.settings.googleClientId || !config?.accessToken)
+      throw new Error("Google Calendar\u304C\u63A5\u7D9A\u3055\u308C\u3066\u3044\u307E\u305B\u3093\u3002\u8A2D\u5B9A\u304B\u3089\u63A5\u7D9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+    if (config.expiresAt > Date.now() + 6e4)
+      return config.accessToken;
+    if (!config.refreshToken)
+      throw new Error("Google refresh token is unavailable. Please reconnect.");
+    if (!this.settings.googleClientSecret)
+      throw new Error("Google Client Secret is unavailable. Please reconnect.");
+    const refreshed = await refreshGoogleToken(this.settings.googleClientId, this.settings.googleClientSecret, config.refreshToken);
+    this.settings.googleTokens = refreshed;
+    await this.saveSettings();
+    return refreshed.accessToken;
+  }
+  async syncGoogleCalendar() {
     try {
-      let accessToken = config.accessToken;
-      if (config.expiresAt <= Date.now() + 6e4) {
-        if (!config.refreshToken)
-          throw new Error("Google refresh token is unavailable. Please reconnect.");
-        if (!this.settings.googleClientSecret)
-          throw new Error("Google Client Secret is unavailable. Please reconnect.");
-        const refreshed = await refreshGoogleToken(this.settings.googleClientId, this.settings.googleClientSecret, config.refreshToken);
-        this.settings.googleTokens = refreshed;
-        await this.saveSettings();
-        accessToken = refreshed.accessToken;
-      }
+      const accessToken = await this.getGoogleAccessToken();
       const start = new Date(this.settings.year, this.settings.month - 1, 1);
       const end = new Date(this.settings.year, this.settings.month, 1);
       const events = await listGoogleEvents(accessToken, this.settings.googleCalendarId || "primary", start.toISOString(), end.toISOString());
-      await this.saveData({ ...this.settings, googleLastSyncCount: events.length });
       new import_obsidian4.Notice(`Google Calendar: ${events.length}\u4EF6\u53D6\u5F97\u3057\u307E\u3057\u305F\u3002`);
+    } catch (error) {
+      notifyGoogleError(error);
+    }
+  }
+  async addGoogleCalendarEvent(date) {
+    try {
+      const targetDate = date || `${this.settings.year}-${String(this.settings.month).padStart(2, "0")}-${String((/* @__PURE__ */ new Date()).getDate()).padStart(2, "0")}`;
+      const title = window.prompt(`${targetDate} \u306BGoogle Calendar\u3078\u8FFD\u52A0\u3059\u308B\u4E88\u5B9A\u306E\u30BF\u30A4\u30C8\u30EB`);
+      if (!title?.trim())
+        return;
+      const startTime = window.prompt("\u958B\u59CB\u6642\u523B\uFF08\u4F8B: 09:00\uFF09\u3002\u7A7A\u6B04\u306A\u3089\u7D42\u65E5\u4E88\u5B9A", "09:00");
+      if (startTime === null)
+        return;
+      let start;
+      let end;
+      if (!startTime.trim()) {
+        start = /* @__PURE__ */ new Date(`${targetDate}T00:00:00`);
+        end = new Date(start);
+        end.setDate(end.getDate() + 1);
+      } else {
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime.trim()))
+          throw new Error("\u958B\u59CB\u6642\u523B\u306F HH:MM \u5F62\u5F0F\u3067\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+        const endTime = window.prompt("\u7D42\u4E86\u6642\u523B\uFF08\u4F8B: 10:00\uFF09", "10:00");
+        if (endTime === null)
+          return;
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime.trim()))
+          throw new Error("\u7D42\u4E86\u6642\u523B\u306F HH:MM \u5F62\u5F0F\u3067\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+        start = /* @__PURE__ */ new Date(`${targetDate}T${startTime.trim()}:00`);
+        end = /* @__PURE__ */ new Date(`${targetDate}T${endTime.trim()}:00`);
+        if (end <= start)
+          throw new Error("\u7D42\u4E86\u6642\u523B\u306F\u958B\u59CB\u6642\u523B\u3088\u308A\u5F8C\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+      }
+      const accessToken = await this.getGoogleAccessToken();
+      const result = await createGoogleEvent(accessToken, this.settings.googleCalendarId || "primary", title.trim(), start, end);
+      new import_obsidian4.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
+      if (result.htmlLink)
+        console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
     } catch (error) {
       notifyGoogleError(error);
     }
