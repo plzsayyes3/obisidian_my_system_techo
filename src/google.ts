@@ -1,7 +1,4 @@
-import * as http from "http";
-import { randomBytes, createHash } from "crypto";
-import { requestUrl, Notice } from "obsidian";
-import { shell } from "electron";
+import { Notice, requestUrl } from "obsidian";
 
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -27,16 +24,21 @@ function base64url(bytes: Uint8Array): string {
 }
 
 function randomString(length = 32): string {
+  const { randomBytes } = require("crypto");
   return base64url(randomBytes(length));
 }
 
 function pkceChallenge(verifier: string): string {
+  const { createHash } = require("crypto");
   return base64url(createHash("sha256").update(verifier).digest());
 }
 
 export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
   if (!clientId.trim()) throw new Error("Google Client ID is not configured.");
+  if (!(window as any).require) throw new Error("Google OAuthはデスクトップ版Obsidianで利用できます。モバイル版の認証は次の段階で対応します。");
 
+  const http = require("http");
+  const { shell } = (window as any).require("electron");
   const verifier = randomString(48);
   const challenge = pkceChallenge(verifier);
   const state = randomString(24);
@@ -46,7 +48,6 @@ export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve());
   });
-
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Could not start OAuth callback server.");
   const redirectUri = `http://127.0.0.1:${address.port}`;
@@ -67,24 +68,24 @@ export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
   try {
     const code = await new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("Google OAuth timed out.")), 180000);
-      server.on("request", (req, res) => {
+      server.on("request", (req: any, res: any) => {
         try {
-          const requestUrl = new URL(req.url ?? "/", redirectUri);
-          if (requestUrl.pathname !== "/") return;
-          if (requestUrl.searchParams.get("state") !== state) {
+          const callbackUrl = new URL(req.url ?? "/", redirectUri);
+          if (callbackUrl.pathname !== "/") return;
+          if (callbackUrl.searchParams.get("state") !== state) {
             res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
             res.end("Invalid OAuth state.");
             reject(new Error("Invalid OAuth state."));
             return;
           }
-          const error = requestUrl.searchParams.get("error");
+          const error = callbackUrl.searchParams.get("error");
           if (error) {
             res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
             res.end("Google authorization was cancelled.");
             reject(new Error(`Google authorization failed: ${error}`));
             return;
           }
-          const value = requestUrl.searchParams.get("code");
+          const value = callbackUrl.searchParams.get("code");
           if (!value) throw new Error("Google did not return an authorization code.");
           clearTimeout(timeout);
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -101,25 +102,11 @@ export async function authorizeGoogle(clientId: string): Promise<GoogleTokens> {
       url: TOKEN_ENDPOINT,
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: clientId.trim(),
-        code,
-        code_verifier: verifier,
-        grant_type: "authorization_code",
-        redirect_uri: redirectUri,
-      }).toString(),
+      body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString(),
     });
-
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Google token exchange failed (${response.status}).`);
-    }
-
+    if (response.status < 200 || response.status >= 300) throw new Error(`Google token exchange failed (${response.status}).`);
     const data = response.json as { access_token: string; refresh_token?: string; expires_in: number };
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      expiresAt: Date.now() + data.expires_in * 1000,
-    };
+    return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Date.now() + data.expires_in * 1000 };
   } finally {
     server.close();
   }
@@ -130,11 +117,7 @@ export async function refreshGoogleToken(clientId: string, refreshToken: string)
     url: TOKEN_ENDPOINT,
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId.trim(),
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }).toString(),
+    body: new URLSearchParams({ client_id: clientId.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString(),
   });
   if (response.status < 200 || response.status >= 300) throw new Error(`Google token refresh failed (${response.status}).`);
   const data = response.json as { access_token: string; expires_in: number };
@@ -148,21 +131,10 @@ export async function listGoogleEvents(accessToken: string, calendarId: string, 
   url.searchParams.set("singleEvents", "true");
   url.searchParams.set("orderBy", "startTime");
   url.searchParams.set("maxResults", "2500");
-
-  const response = await requestUrl({
-    url: url.toString(),
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const response = await requestUrl({ url: url.toString(), headers: { Authorization: `Bearer ${accessToken}` } });
   if (response.status < 200 || response.status >= 300) throw new Error(`Google Calendar request failed (${response.status}).`);
-
   const data = response.json as { items?: Array<{ id: string; summary?: string; start?: { date?: string; dateTime?: string }; end?: { date?: string; dateTime?: string } }> };
-  return (data.items ?? []).map((event) => ({
-    id: event.id,
-    summary: event.summary || "(無題)",
-    start: event.start?.dateTime ?? event.start?.date ?? "",
-    end: event.end?.dateTime ?? event.end?.date ?? "",
-    allDay: !event.start?.dateTime,
-  }));
+  return (data.items ?? []).map((event) => ({ id: event.id, summary: event.summary || "(無題)", start: event.start?.dateTime ?? event.start?.date ?? "", end: event.end?.dateTime ?? event.end?.date ?? "", allDay: !event.start?.dateTime }));
 }
 
 export function notifyGoogleError(error: unknown): void {
