@@ -48,7 +48,10 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    const isConnected = Boolean(this.plugin.settings.googleTokens?.accessToken);
+    // Google may return an access token without a refresh token on a later
+    // authorization, so either token proves that the OAuth flow completed.
+    const tokens = this.plugin.settings.googleTokens;
+    const isConnected = Boolean(tokens?.accessToken || tokens?.refreshToken);
 
     new Setting(containerEl)
       .setName("Google Calendarに接続")
@@ -63,8 +66,11 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
           }
           button.setDisabled(true);
           try {
-            const tokens = await authorizeGoogle(this.plugin.settings.googleClientId);
-            this.plugin.settings.googleTokens = tokens;
+            const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+            if (!newTokens.accessToken && !newTokens.refreshToken) {
+              throw new Error("Google OAuthは完了しましたが、トークンを取得できませんでした。");
+            }
+            this.plugin.settings.googleTokens = newTokens;
             await this.plugin.saveSettings();
             new Notice("Google Calendarに接続しました。");
             this.display();
