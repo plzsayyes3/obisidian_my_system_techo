@@ -73,10 +73,12 @@ function describeGoogleResponse(response) {
   const errorDescription = typeof parsed?.error_description === "string" ? parsed.error_description : void 0;
   return { status, error: errorCode, errorDescription, message: errorDescription || errorCode || body || `HTTP ${status ?? "unknown"}` };
 }
-async function authorizeGoogle(clientId) {
+async function authorizeGoogle(clientId, clientSecret) {
   log("start");
   if (!clientId.trim())
     throw new Error("Google Client ID is not configured.");
+  if (!clientSecret.trim())
+    throw new Error("Google Client Secret is not configured.");
   if (!window.require)
     throw new Error("Google OAuth\u306F\u30C7\u30B9\u30AF\u30C8\u30C3\u30D7\u7248Obsidian\u3067\u5229\u7528\u3067\u304D\u307E\u3059\u3002\u30E2\u30D0\u30A4\u30EB\u7248\u306E\u8A8D\u8A3C\u306F\u6B21\u306E\u6BB5\u968E\u3067\u5BFE\u5FDC\u3057\u307E\u3059\u3002");
   const http = require("http");
@@ -147,7 +149,7 @@ async function authorizeGoogle(clientId) {
       });
     });
     log("token exchange started");
-    const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString(), throw: false });
+    const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), code, code_verifier: verifier, grant_type: "authorization_code", redirect_uri: redirectUri }).toString(), throw: false });
     const details = describeGoogleResponse(response);
     log("token exchange response", { status: details.status, error: details.error, errorDescription: details.errorDescription });
     if (details.status === void 0 || details.status < 200 || details.status >= 300) {
@@ -166,9 +168,9 @@ async function authorizeGoogle(clientId) {
     log("callback server closed");
   }
 }
-async function refreshGoogleToken(clientId, refreshToken) {
+async function refreshGoogleToken(clientId, clientSecret, refreshToken) {
   log("refresh started");
-  const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString() });
+  const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString() });
   log("refresh response", { status: response.status });
   if (response.status < 200 || response.status >= 300)
     throw new Error(`Google token refresh failed (${response.status}).`);
@@ -211,9 +213,13 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       await this.plugin.saveSettings();
     }));
     containerEl.createEl("h3", { text: "Google Calendar" });
-    containerEl.createEl("p", { text: "\u8AAD\u307F\u53D6\u308A\u5C02\u7528\u3067Google Calendar\u306E\u4E88\u5B9A\u3092\u53D6\u5F97\u3057\u307E\u3059\u3002OAuth\u30C8\u30FC\u30AF\u30F3\u306F\u3053\u306EVault\u306E\u30D7\u30E9\u30B0\u30A4\u30F3\u30C7\u30FC\u30BF\u306B\u4FDD\u5B58\u3055\u308C\u3001GitHub\u306B\u306F\u9001\u4FE1\u3055\u308C\u307E\u305B\u3093\u3002" });
-    new import_obsidian2.Setting(containerEl).setName("Google Client ID").setDesc("Google Cloud\u3067\u4F5C\u6210\u3057\u305FOAuth\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8\u306EClient ID\u3002Secret\u306F\u5165\u529B\u3057\u307E\u305B\u3093\u3002").addText((text) => text.setPlaceholder("xxxx.apps.googleusercontent.com").setValue(this.plugin.settings.googleClientId).onChange(async (value) => {
+    containerEl.createEl("p", { text: "\u8AAD\u307F\u53D6\u308A\u5C02\u7528\u3067Google Calendar\u306E\u4E88\u5B9A\u3092\u53D6\u5F97\u3057\u307E\u3059\u3002OAuth\u30C8\u30FC\u30AF\u30F3\u3068Client Secret\u306F\u3053\u306EVault\u306E\u30D7\u30E9\u30B0\u30A4\u30F3\u30C7\u30FC\u30BF\u306B\u4FDD\u5B58\u3055\u308C\u3001GitHub\u306B\u306F\u9001\u4FE1\u3055\u308C\u307E\u305B\u3093\u3002" });
+    new import_obsidian2.Setting(containerEl).setName("Google Client ID").setDesc("Google Cloud\u3067\u4F5C\u6210\u3057\u305FOAuth\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8\u306EClient ID").addText((text) => text.setPlaceholder("xxxx.apps.googleusercontent.com").setValue(this.plugin.settings.googleClientId).onChange(async (value) => {
       this.plugin.settings.googleClientId = value.trim();
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian2.Setting(containerEl).setName("Google Client Secret").setDesc("Google Cloud\u306E\u540C\u3058OAuth\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8\u306B\u8868\u793A\u3055\u308C\u308BClient Secret\u3002GitHub\u306B\u306F\u4FDD\u5B58\u3055\u308C\u307E\u305B\u3093\u3002").addText((text) => text.setPlaceholder("GOCSPX-...").setValue(this.plugin.settings.googleClientSecret).onChange(async (value) => {
+      this.plugin.settings.googleClientSecret = value.trim();
       await this.plugin.saveSettings();
     }));
     new import_obsidian2.Setting(containerEl).setName("Calendar ID").setDesc("\u53D6\u5F97\u3059\u308B\u30AB\u30EC\u30F3\u30C0\u30FC\u3002\u901A\u5E38\u306F primary\u3002").addText((text) => text.setPlaceholder("primary").setValue(this.plugin.settings.googleCalendarId).onChange(async (value) => {
@@ -227,10 +233,14 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
         new import_obsidian2.Notice("\u5148\u306BGoogle Client ID\u3092\u8A2D\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
         return;
       }
+      if (!this.plugin.settings.googleClientSecret) {
+        new import_obsidian2.Notice("\u5148\u306BGoogle Client Secret\u3092\u8A2D\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+        return;
+      }
       button.setDisabled(true);
       try {
         new import_obsidian2.Notice("Google OAuth: \u8A8D\u8A3C\u3092\u958B\u59CB\u3057\u307E\u3059\u3002");
-        const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId);
+        const newTokens = await authorizeGoogle(this.plugin.settings.googleClientId, this.plugin.settings.googleClientSecret);
         new import_obsidian2.Notice(`Google OAuth: \u30C8\u30FC\u30AF\u30F3\u53D6\u5F97\u6210\u529F\uFF08access token: ${newTokens.accessToken ? "\u3042\u308A" : "\u306A\u3057"} / refresh token: ${newTokens.refreshToken ? "\u3042\u308A" : "\u306A\u3057"}\uFF09`);
         if (!newTokens.accessToken)
           throw new Error("Google OAuth\u306F\u5B8C\u4E86\u3057\u307E\u3057\u305F\u304C\u3001\u30A2\u30AF\u30BB\u30B9\u30C8\u30FC\u30AF\u30F3\u3092\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002");
@@ -485,7 +495,9 @@ var MySystemTechoPlugin = class extends import_obsidian4.Plugin {
       if (config.expiresAt <= Date.now() + 6e4) {
         if (!config.refreshToken)
           throw new Error("Google refresh token is unavailable. Please reconnect.");
-        const refreshed = await refreshGoogleToken(this.settings.googleClientId, config.refreshToken);
+        if (!this.settings.googleClientSecret)
+          throw new Error("Google Client Secret is unavailable. Please reconnect.");
+        const refreshed = await refreshGoogleToken(this.settings.googleClientId, this.settings.googleClientSecret, config.refreshToken);
         this.settings.googleTokens = refreshed;
         await this.saveSettings();
         accessToken = refreshed.accessToken;
