@@ -20,7 +20,12 @@ export interface MySystemTechoSettings {
   month: number;
   googleClientId: string;
   googleClientSecret: string;
+  /** Legacy single-calendar setting, migrated into googleCalendarIds on load. */
   googleCalendarId: string;
+  /** Calendars mirrored into the techo. */
+  googleCalendarIds: string[];
+  /** Calendar that "Add Google Calendar event" writes to. */
+  googleWriteCalendarId: string;
   googleTokens?: {
     accessToken: string;
     refreshToken?: string;
@@ -36,4 +41,6 @@ export const DEFAULT_SETTINGS: MySystemTechoSettings = {
   googleClientId: "",
   googleClientSecret: "",
   googleCalendarId: "primary",
+  googleCalendarIds: ["primary"],
+  googleWriteCalendarId: "primary",
 };

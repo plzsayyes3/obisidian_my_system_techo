@@ -27,7 +27,19 @@ displayed month into `<Markdownフォルダ>/YYYY-MM.md`:
   instead of being duplicated, so an existing techo does not double up on the first sync.
 - All-day events are written without a time and span every day they cover.
 
-Only the calendar named in `Calendar ID` is synced.
+### Choosing calendars
+
+Settings lists the calendars you are subscribed to (press **カレンダー一覧を取得**) and syncs the ones
+you tick; an ID can also be typed in by hand if the list cannot be fetched. **予定の追加先** picks the
+calendar that `Add Google Calendar event` writes to.
+
+The marker carries the calendar as well as the event — `%%gcal:<calendar>:<event id>%%` — so an event
+shared across two calendars keeps one line per calendar. Only calendars that were actually fetched
+have their lines removed: unticking a calendar, or a calendar that fails to load, leaves the lines it
+already wrote in place.
+
+Reading the calendar list needs the `calendar.calendarlist.readonly` scope, so reconnect once after
+upgrading from a version that synced a single calendar.
 
 ## Notes and items
 

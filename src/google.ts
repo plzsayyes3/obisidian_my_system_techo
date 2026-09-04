@@ -5,11 +5,12 @@ import type { GoogleTechoEntry } from "./data/googleSync";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const CALENDAR_ENDPOINT = "https://www.googleapis.com/calendar/v3";
-const SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const SCOPE = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 const LOG_PREFIX = "[My-system-Techo][Google OAuth]";
 
 export interface GoogleTokens { accessToken: string; refreshToken?: string; expiresAt: number; }
 export interface GoogleCalendarEvent { id: string; summary: string; start: string; end: string; allDay: boolean; }
+export interface GoogleCalendarSummary { id: string; summary: string; primary: boolean; }
 function log(message: string, data?: unknown): void { console.log(LOG_PREFIX, message, data ?? ""); }
 function base64url(bytes: Uint8Array): string { return Buffer.from(bytes).toString("base64url"); }
 function randomString(length = 32): string { const { randomBytes } = require("crypto"); return base64url(randomBytes(length)); }
@@ -92,6 +93,53 @@ export async function refreshGoogleToken(clientId: string, clientSecret: string,
   return { accessToken: data.access_token, refreshToken, expiresAt: Date.now() + data.expires_in * 1000 };
 }
 
+/** FNV-1a, only needs to be stable and short. */
+function hash4(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(4, "0").slice(-4);
+}
+
+/**
+ * Short stable identity for a calendar, used to namespace line markers. Two calendars can share
+ * a local part (`you@a.com` and `you@b.com`), so the hash of the full id disambiguates them.
+ */
+export function calendarSlug(calendarId: string): string {
+  const local = (calendarId.split("@")[0] || calendarId).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${local.slice(0, 20) || "cal"}-${hash4(calendarId)}`;
+}
+
+export async function listGoogleCalendars(accessToken: string): Promise<GoogleCalendarSummary[]> {
+  log("calendar list request started");
+  const calendars: GoogleCalendarSummary[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${CALENDAR_ENDPOINT}/users/me/calendarList`);
+    url.searchParams.set("maxResults", "250");
+    url.searchParams.set("minAccessRole", "reader");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const response: any = await requestUrl({ url: url.toString(), headers: { Authorization: `Bearer ${accessToken}` }, throw: false });
+    if (response.status < 200 || response.status >= 300) {
+      const details = describeGoogleResponse(response);
+      log("calendar list failed", details);
+      if (details.status === 401 || details.status === 403) {
+        throw new Error("カレンダー一覧を取得する権限がありません。設定から再認証してください。");
+      }
+      throw new Error(`Google calendar list failed (${details.status ?? "unknown"}): ${details.message}`);
+    }
+    const data = response.json as { items?: Array<{ id: string; summary?: string; summaryOverride?: string; primary?: boolean }>; nextPageToken?: string };
+    for (const item of data.items ?? []) {
+      calendars.push({ id: item.id, summary: item.summaryOverride || item.summary || item.id, primary: Boolean(item.primary) });
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  log("calendar list received", { count: calendars.length });
+  return calendars.sort((a, b) => Number(b.primary) - Number(a.primary) || a.summary.localeCompare(b.summary));
+}
+
 export async function listGoogleEvents(accessToken: string, calendarId: string, timeMin: string, timeMax: string): Promise<GoogleCalendarEvent[]> {
   log("calendar request started", { calendarId, timeMin, timeMax });
   const url = new URL(`${CALENDAR_ENDPOINT}/calendars/${encodeURIComponent(calendarId)}/events`); url.searchParams.set("timeMin", timeMin); url.searchParams.set("timeMax", timeMax); url.searchParams.set("singleEvents", "true"); url.searchParams.set("orderBy", "startTime"); url.searchParams.set("maxResults", "2500");
@@ -153,10 +201,12 @@ function allDayRange(event: GoogleCalendarEvent): string[] {
 
 /**
  * Flattens Google events into one techo line per day, dropping anything outside the target month.
- * Times are rendered in the local timezone, which is what the techo records.
+ * Times are rendered in the local timezone, which is what the techo records. Keys carry the
+ * calendar slug, because the same event id appears on every calendar it is shared with.
  */
-export function toTechoEntries(events: GoogleCalendarEvent[], year: number, month: number): GoogleTechoEntry[] {
+export function toTechoEntries(events: GoogleCalendarEvent[], year: number, month: number, calendarId: string): GoogleTechoEntry[] {
   const prefix = `${year}-${pad2(month)}-`;
+  const slug = calendarSlug(calendarId);
   const entries: GoogleTechoEntry[] = [];
 
   for (const event of events) {
@@ -165,7 +215,7 @@ export function toTechoEntries(events: GoogleCalendarEvent[], year: number, mont
       const days = allDayRange(event);
       for (const date of days) {
         if (!date.startsWith(prefix)) continue;
-        entries.push({ key: days.length > 1 ? `${event.id}/${date}` : event.id, date, title });
+        entries.push({ key: days.length > 1 ? `${slug}:${event.id}/${date}` : `${slug}:${event.id}`, date, title });
       }
       continue;
     }
@@ -176,7 +226,7 @@ export function toTechoEntries(events: GoogleCalendarEvent[], year: number, mont
     if (!date.startsWith(prefix)) continue;
     const end = event.end ? new Date(event.end) : null;
     const sameDay = end && !Number.isNaN(end.getTime()) && localDate(end) === date;
-    entries.push({ key: event.id, date, time: sameDay ? `${localTime(start)}-${localTime(end!)}` : localTime(start), title });
+    entries.push({ key: `${slug}:${event.id}`, date, time: sameDay ? `${localTime(start)}-${localTime(end!)}` : localTime(start), title });
   }
 
   return entries.sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.title.localeCompare(b.title));

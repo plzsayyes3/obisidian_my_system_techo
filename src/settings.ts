@@ -1,8 +1,11 @@
 import { Notice, PluginSettingTab, Setting } from "obsidian";
 import type MySystemTechoPlugin from "./main";
-import { authorizeGoogle, notifyGoogleError } from "./google";
+import { GoogleCalendarSummary, authorizeGoogle, notifyGoogleError } from "./google";
 
 export class MySystemTechoSettingTab extends PluginSettingTab {
+  /** Fetched on demand and kept across re-renders so the picker survives a toggle. */
+  private calendars: GoogleCalendarSummary[] = [];
+
   constructor(app: any, private plugin: MySystemTechoPlugin) {
     super(app, plugin);
   }
@@ -36,14 +39,6 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
       .setDesc("Google Cloudの同じOAuthクライアントに表示されるClient Secret。GitHubには保存されません。")
       .addText((text) => text.setPlaceholder("GOCSPX-...").setValue(this.plugin.settings.googleClientSecret).onChange(async (value) => {
         this.plugin.settings.googleClientSecret = value.trim();
-        await this.plugin.saveSettings();
-      }));
-
-    new Setting(containerEl)
-      .setName("Calendar ID")
-      .setDesc("取得・追加するカレンダー。通常は primary。")
-      .addText((text) => text.setPlaceholder("primary").setValue(this.plugin.settings.googleCalendarId).onChange(async (value) => {
-        this.plugin.settings.googleCalendarId = value.trim() || "primary";
         await this.plugin.saveSettings();
       }));
 
@@ -85,5 +80,93 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("接続状態")
       .setDesc(isConnected ? "接続済み" : "未接続");
+
+    this.renderCalendarPicker(containerEl, isConnected);
+  }
+
+  private async setCalendarIds(ids: string[]): Promise<void> {
+    const unique = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+    this.plugin.settings.googleCalendarIds = unique.length ? unique : ["primary"];
+    if (!this.plugin.settings.googleCalendarIds.includes(this.plugin.settings.googleWriteCalendarId)) {
+      this.plugin.settings.googleWriteCalendarId = this.plugin.settings.googleCalendarIds[0];
+    }
+    await this.plugin.saveSettings();
+    this.display();
+  }
+
+  private renderCalendarPicker(containerEl: HTMLElement, isConnected: boolean): void {
+    const selected = this.plugin.syncCalendarIds();
+
+    containerEl.createEl("h3", { text: "同期するカレンダー" });
+    containerEl.createEl("p", { text: "選んだカレンダーの予定が手帳のMarkdownに書き込まれます。チェックを外したカレンダーは同期されなくなりますが、すでに書き込まれた行はそのまま残ります。" });
+
+    new Setting(containerEl)
+      .setName("カレンダー一覧を取得")
+      .setDesc(isConnected ? "Googleから購読中のカレンダーを読み込みます。" : "先にGoogle Calendarへ接続してください。")
+      .addButton((button) => button
+        .setButtonText("取得")
+        .setDisabled(!isConnected)
+        .onClick(async () => {
+          button.setDisabled(true);
+          try {
+            this.calendars = await this.plugin.listGoogleCalendars();
+            new Notice(`${this.calendars.length}件のカレンダーを取得しました。`);
+            this.display();
+          } catch (error) {
+            notifyGoogleError(error);
+            button.setDisabled(false);
+          }
+        }));
+
+    if (this.calendars.length) {
+      for (const calendar of this.calendars) {
+        new Setting(containerEl)
+          .setName(calendar.primary ? `${calendar.summary}（メイン）` : calendar.summary)
+          .setDesc(calendar.id)
+          .addToggle((toggle) => toggle
+            .setValue(selected.includes(calendar.id))
+            .onChange(async (value) => {
+              const next = value ? [...selected, calendar.id] : selected.filter((id) => id !== calendar.id);
+              await this.setCalendarIds(next);
+            }));
+      }
+    }
+
+    // Calendars the picker has not loaded — or that were typed in by hand — still need to be visible.
+    for (const id of selected.filter((id) => !this.calendars.some((calendar) => calendar.id === id))) {
+      new Setting(containerEl)
+        .setName(id)
+        .setDesc("同期対象")
+        .addExtraButton((button) => button
+          .setIcon("trash")
+          .setTooltip("同期対象から外す")
+          .onClick(async () => { await this.setCalendarIds(selected.filter((value) => value !== id)); }));
+    }
+
+    let manualId = "";
+    new Setting(containerEl)
+      .setName("カレンダーIDを手動で追加")
+      .setDesc("一覧を取得できない場合に、GoogleカレンダーのIDを直接入力します。")
+      .addText((text) => text.setPlaceholder("xxxx@group.calendar.google.com").onChange((value) => { manualId = value; }))
+      .addButton((button) => button
+        .setButtonText("追加")
+        .onClick(async () => {
+          if (!manualId.trim()) return;
+          await this.setCalendarIds([...selected, manualId]);
+        }));
+
+    new Setting(containerEl)
+      .setName("予定の追加先")
+      .setDesc("「Google予定追加」で書き込むカレンダー。")
+      .addDropdown((dropdown) => {
+        for (const id of selected) {
+          dropdown.addOption(id, this.calendars.find((calendar) => calendar.id === id)?.summary || id);
+        }
+        dropdown.setValue(this.plugin.settings.googleWriteCalendarId || selected[0]);
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.googleWriteCalendarId = value;
+          await this.plugin.saveSettings();
+        });
+      });
   }
 }

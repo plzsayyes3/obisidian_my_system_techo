@@ -23,8 +23,12 @@ export function renderEntryLine(entry: GoogleTechoEntry): string {
   return `- ${entry.time ? `${entry.time} ` : ""}${entry.title} %%gcal:${entry.key}%%`;
 }
 
-/** Mirrors `entries` into `<folder>/<YYYY-MM>.md`, keeping the file's existing week/date structure. */
-export async function applyGoogleEvents(app: App, folder: string, year: number, month: number, entries: GoogleTechoEntry[]): Promise<GoogleSyncResult> {
+/**
+ * Mirrors `entries` into `<folder>/<YYYY-MM>.md`, keeping the file's existing week/date structure.
+ * `syncedSlugs` names the calendars that were actually fetched: only their lines may be removed,
+ * so a calendar the user deselected — or one whose fetch failed — keeps what it already wrote.
+ */
+export async function applyGoogleEvents(app: App, folder: string, year: number, month: number, entries: GoogleTechoEntry[], syncedSlugs: string[]): Promise<GoogleSyncResult> {
   const path = monthFilePath(folder, year, month);
   const file = await openMonthFile(app, folder, year, month);
 
@@ -33,7 +37,7 @@ export async function applyGoogleEvents(app: App, folder: string, year: number, 
   const style = detectDateHeadingStyle(lines);
   const result: GoogleSyncResult = { path, added: 0, updated: 0, adopted: 0, removed: 0 };
 
-  const marked = collectMarkedLines(lines);
+  const marked = collectMarkedLines(lines, syncedSlugs[0]);
   const wanted = new Map(entries.map((entry) => [entry.key, entry]));
 
   // Replacements and removals are index-stable until applied, so decide everything first.
@@ -71,7 +75,7 @@ export async function applyGoogleEvents(app: App, folder: string, year: number, 
   }
 
   for (const [key, existing] of marked) {
-    if (wanted.has(key)) continue;
+    if (wanted.has(key) || !syncedSlugs.includes(keySlug(key))) continue;
     removals.add(existing.index);
     result.removed++;
   }
@@ -85,12 +89,20 @@ export async function applyGoogleEvents(app: App, folder: string, year: number, 
   return result;
 }
 
-function collectMarkedLines(lines: string[]): Map<string, { index: number; date: string }> {
+function keySlug(key: string): string {
+  return key.slice(0, key.indexOf(":"));
+}
+
+function collectMarkedLines(lines: string[], legacySlug: string): Map<string, { index: number; date: string }> {
   const dates = lineDates(lines);
   const marked = new Map<string, { index: number; date: string }>();
   lines.forEach((line, index) => {
-    const parsed = parseItemLine(line);
-    if (parsed?.googleId && !marked.has(parsed.googleId)) marked.set(parsed.googleId, { index, date: dates[index] });
+    const raw = parseItemLine(line)?.googleId;
+    if (!raw) return;
+    // Markers written before multi-calendar support carry a bare event id; read them as
+    // belonging to the first synced calendar so they are re-keyed rather than duplicated.
+    const key = raw.includes(":") ? raw : `${legacySlug}:${raw}`;
+    if (!marked.has(key)) marked.set(key, { index, date: dates[index] });
   });
   return marked;
 }

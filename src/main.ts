@@ -3,14 +3,24 @@ import { DEFAULT_SETTINGS, MySystemTechoSettings } from "./types";
 import { pad2 } from "./utils/date";
 import { MySystemTechoSettingTab } from "./settings";
 import { MONTH_VIEW_TYPE, MonthGridView } from "./views/month";
-import { createGoogleEvent, listGoogleEvents, notifyGoogleError, refreshGoogleToken, toTechoEntries } from "./google";
-import { applyGoogleEvents } from "./data/googleSync";
+import { GoogleCalendarSummary, calendarSlug, createGoogleEvent, listGoogleCalendars, listGoogleEvents, notifyGoogleError, refreshGoogleToken, toTechoEntries } from "./google";
+import { GoogleTechoEntry, applyGoogleEvents } from "./data/googleSync";
 
 export default class MySystemTechoPlugin extends Plugin {
   settings: MySystemTechoSettings = DEFAULT_SETTINGS;
 
   async onload(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const saved = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    if (!Array.isArray(saved?.googleCalendarIds) || !saved.googleCalendarIds.length) {
+      // Upgrade from the single-calendar setting.
+      this.settings.googleCalendarIds = [saved?.googleCalendarId || DEFAULT_SETTINGS.googleCalendarIds[0]];
+    }
+    if (!this.settings.googleCalendarIds.includes(this.settings.googleWriteCalendarId)) {
+      // Includes the migration case, where the write target still holds the "primary" default.
+      this.settings.googleWriteCalendarId = this.settings.googleCalendarIds[0];
+    }
+    await this.saveSettings();
     this.registerView(MONTH_VIEW_TYPE, (leaf) => new MonthGridView(leaf, this));
     this.addRibbonIcon("calendar-days", "My-system-Techo", () => void this.activateView());
     this.addCommand({ id: "open-month-grid", name: "Open month grid", callback: () => void this.activateView() });
@@ -42,17 +52,42 @@ export default class MySystemTechoPlugin extends Plugin {
     return refreshed.accessToken;
   }
 
-  /** Mirrors the displayed month from Google Calendar into `<sourceFolder>/YYYY-MM.md`. */
+  syncCalendarIds(): string[] {
+    const ids = this.settings.googleCalendarIds.map((id) => id.trim()).filter(Boolean);
+    return ids.length ? ids : ["primary"];
+  }
+
+  async listGoogleCalendars(): Promise<GoogleCalendarSummary[]> {
+    return listGoogleCalendars(await this.getGoogleAccessToken());
+  }
+
+  /** Mirrors the displayed month of every selected calendar into `<sourceFolder>/YYYY-MM.md`. */
   async syncGoogleCalendar(): Promise<void> {
     try {
       const { year, month } = this.settings;
       const accessToken = await this.getGoogleAccessToken();
-      const start = new Date(year, month - 1, 1);
-      const end = new Date(year, month, 1);
-      const events = await listGoogleEvents(accessToken, this.settings.googleCalendarId || "primary", start.toISOString(), end.toISOString());
-      const entries = toTechoEntries(events, year, month);
-      const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries);
-      new Notice(`${result.path}: 追加${result.added} / 更新${result.updated} / 既存に紐付け${result.adopted} / 削除${result.removed}`);
+      const start = new Date(year, month - 1, 1).toISOString();
+      const end = new Date(year, month, 1).toISOString();
+
+      const entries: GoogleTechoEntry[] = [];
+      const syncedSlugs: string[] = [];
+      const failed: string[] = [];
+      for (const calendarId of this.syncCalendarIds()) {
+        try {
+          const events = await listGoogleEvents(accessToken, calendarId, start, end);
+          entries.push(...toTechoEntries(events, year, month, calendarId));
+          syncedSlugs.push(calendarSlug(calendarId));
+        } catch (error) {
+          // One unreachable calendar must not wipe the lines the others already wrote.
+          failed.push(calendarId);
+          notifyGoogleError(error);
+        }
+      }
+      if (!syncedSlugs.length) throw new Error("どのカレンダーからも取得できませんでした。");
+
+      const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs);
+      const summary = `${result.path}: 追加${result.added} / 更新${result.updated} / 既存に紐付け${result.adopted} / 削除${result.removed}`;
+      new Notice(failed.length ? `${summary}（${failed.length}件のカレンダーは取得失敗）` : summary);
       await this.refreshMonthViews();
     } catch (error) {
       notifyGoogleError(error);
@@ -98,7 +133,7 @@ export default class MySystemTechoPlugin extends Plugin {
       }
 
       const accessToken = await this.getGoogleAccessToken();
-      const result = await createGoogleEvent(accessToken, this.settings.googleCalendarId || "primary", title.trim(), start, end);
+      const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
       new Notice(`Google Calendarに「${title.trim()}」を追加しました。`);
       await this.syncGoogleCalendar();
       if (result.htmlLink) console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
