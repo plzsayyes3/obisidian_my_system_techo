@@ -1,6 +1,6 @@
-import { ItemView, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import type MySystemTechoPlugin from "../main";
-import { appendItem, createMarkdownFile, readFolder } from "../data/markdown";
+import { appendTechoItem, readFolder } from "../data/markdown";
 import { daysInMonth, monthLabel, pad2 } from "../utils/date";
 import type { TechoItem } from "../types";
 
@@ -92,11 +92,12 @@ export class MonthGridView extends ItemView {
     const title = window.prompt(`${date} の予定・タスク`);
     if (!title?.trim()) return;
     const isTask = window.confirm("タスクとして登録しますか？\nOK = タスク / キャンセル = 予定");
-    const folder = this.plugin.settings.sourceFolder.replace(/\/+$/, "");
-    const path = `${folder}/${date}.md`;
-    let file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) file = await createMarkdownFile(this.app, path, date);
-    await appendItem(this.app, file, { date, title: title.trim(), kind: isTask ? "task" : "event", checked: false });
+    try {
+      await appendTechoItem(this.app, this.plugin.settings.sourceFolder, { date, title: title.trim(), kind: isTask ? "task" : "event", checked: false });
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : "手帳への書き込みに失敗しました。");
+      return;
+    }
     await this.render();
   }
 

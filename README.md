@@ -29,11 +29,30 @@ displayed month into `<Markdownフォルダ>/YYYY-MM.md`:
 
 Only the calendar named in `Calendar ID` is synced.
 
+## Notes and items
+
+The techo keeps one Markdown file per month, `<Markdownフォルダ>/YYYY-MM.md`. Both the month view's
+`+` button and the Google sync write into that file, under the heading for the day. A day whose
+heading is missing gets one in the file's own style, inside the `## weekNN` section for its ISO week.
+
+An item is a list line under a day heading, optionally a task and optionally timed:
+
+```markdown
+## 9月1日(火)
+
+- 15:00-15:30 打ち合わせ
+- [ ] 09:00 資料を出す
+```
+
+Headings that are not days — `## week36`, `### 日付未定`, `### タスク` — end the previous day's
+section, so the items under them are not counted as belonging to the day above.
+
 ## Development
 
 ```bash
 npm install
-npm run build
+npm run build      # bundles src/ into main.js
+npm run typecheck  # tsc --noEmit
 ```
 
 ## License

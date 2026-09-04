@@ -30,6 +30,7 @@ jobs:
           test -f manifest.json
           test -f main.js
           test -f styles.css
+          test -f versions.json
 
       - name: Read version
         id: version
@@ -38,11 +39,21 @@ jobs:
           VERSION=$(node -e "console.log(require('./manifest.json').version)")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Record version in versions.json
+        run: |
+          node -e '
+            const fs = require("fs");
+            const manifest = require("./manifest.json");
+            const versions = fs.existsSync("versions.json") ? require("./versions.json") : {};
+            versions[manifest.version] = manifest.minAppVersion;
+            fs.writeFileSync("versions.json", JSON.stringify(versions, null, 2) + "\n");
+          '
+
       - name: Commit generated main.js
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add main.js
+          git add main.js versions.json
           if git diff --cached --quiet; then
             echo "main.js is already up to date"
           else

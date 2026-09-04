@@ -1,6 +1,5 @@
-import { App, TFile } from "obsidian";
-import { isoWeek, pad2, weekdayJa } from "../utils/date";
-import { ensureFolder, joinPath, lineDates, parseItemLine, scanHeadings } from "./markdown";
+import { App } from "obsidian";
+import { detectDateHeadingStyle, insertItemLine, lineDates, monthFilePath, openMonthFile, parseItemLine } from "./markdown";
 
 /** One line's worth of Google Calendar data, already resolved to a single techo day. */
 export interface GoogleTechoEntry {
@@ -20,14 +19,6 @@ export interface GoogleSyncResult {
   removed: number;
 }
 
-interface DateHeadingStyle { level: number; iso: boolean; weekday: boolean; blankAfterHeading: boolean; }
-
-const DEFAULT_STYLE: DateHeadingStyle = { level: 2, iso: false, weekday: true, blankAfterHeading: true };
-
-export function monthFilePath(folder: string, year: number, month: number): string {
-  return joinPath(folder, `${year}-${pad2(month)}.md`);
-}
-
 export function renderEntryLine(entry: GoogleTechoEntry): string {
   return `- ${entry.time ? `${entry.time} ` : ""}${entry.title} %%gcal:${entry.key}%%`;
 }
@@ -35,11 +26,7 @@ export function renderEntryLine(entry: GoogleTechoEntry): string {
 /** Mirrors `entries` into `<folder>/<YYYY-MM>.md`, keeping the file's existing week/date structure. */
 export async function applyGoogleEvents(app: App, folder: string, year: number, month: number, entries: GoogleTechoEntry[]): Promise<GoogleSyncResult> {
   const path = monthFilePath(folder, year, month);
-  let file = app.vault.getAbstractFileByPath(path);
-  if (!(file instanceof TFile)) {
-    await ensureFolder(app, folder);
-    file = await app.vault.create(path, `# ${year}年${month}月\n`);
-  }
+  const file = await openMonthFile(app, folder, year, month);
 
   const original = await app.vault.read(file);
   let lines = original.split(/\r?\n/);
@@ -91,7 +78,7 @@ export async function applyGoogleEvents(app: App, folder: string, year: number, 
 
   for (const [index, text] of replacements) lines[index] = text;
   if (removals.size) lines = lines.filter((_, index) => !removals.has(index));
-  for (const entry of insertions) lines = insertEntry(lines, entry, style);
+  for (const entry of insertions) lines = insertItemLine(lines, entry.date, renderEntryLine(entry), style);
 
   const updated = lines.join("\n");
   if (updated !== original) await app.vault.modify(file, updated);
@@ -121,98 +108,4 @@ function findAdoptableLine(lines: string[], entry: GoogleTechoEntry, claimed: Se
     if ((parsed.time ?? "") === (entry.time ?? "") && parsed.title === entry.title) return index;
   }
   return null;
-}
-
-function detectDateHeadingStyle(lines: string[]): DateHeadingStyle {
-  const heading = scanHeadings(lines).find((info) => info.kind === "date");
-  if (!heading) return DEFAULT_STYLE;
-  const text = lines[heading.index];
-  return {
-    level: heading.level,
-    iso: /\d{4}-\d{2}-\d{2}/.test(text),
-    weekday: /\([^)]*\)\s*$/.test(text),
-    blankAfterHeading: (lines[heading.index + 1] ?? "").trim() === "",
-  };
-}
-
-function renderDateHeading(date: string, style: DateHeadingStyle): string {
-  const hashes = "#".repeat(style.level);
-  if (style.iso) return `${hashes} ${date}`;
-  const [, month, day] = date.split("-").map(Number);
-  return `${hashes} ${month}月${day}日${style.weekday ? `(${weekdayJa(date)})` : ""}`;
-}
-
-function insertEntry(lines: string[], entry: GoogleTechoEntry, style: DateHeadingStyle): string[] {
-  const text = renderEntryLine(entry);
-  const dates = lineDates(lines);
-  const headings = scanHeadings(lines);
-  const headingIndexes = new Set(headings.map((info) => info.index));
-
-  // Append after the day's last existing line. The heading itself is not content, or an empty
-  // day would take the item before the blank line that follows its heading.
-  let lastOwned = -1;
-  for (let index = 0; index < lines.length; index++) {
-    if (dates[index] === entry.date && lines[index].trim() !== "" && !headingIndexes.has(index)) lastOwned = index;
-  }
-  if (lastOwned >= 0) {
-    const next = [...lines];
-    next.splice(lastOwned + 1, 0, text);
-    return next;
-  }
-
-  const heading = headings.find((info) => info.kind === "date" && info.date === entry.date);
-  if (heading) {
-    // The day exists but is empty; keep the blank line the file puts under its headings, and
-    // do not let the item run straight into the next heading.
-    const offset = (lines[heading.index + 1] ?? "").trim() === "" ? 2 : 1;
-    const position = heading.index + offset;
-    const block = /^#{1,6}\s/.test(lines[position] ?? "") ? [text, ""] : [text];
-    const next = [...lines];
-    next.splice(position, 0, ...block);
-    return next;
-  }
-
-  const position = findNewDateHeadingPosition(lines, entry.date);
-  const block = style.blankAfterHeading ? [renderDateHeading(entry.date, style), "", text] : [renderDateHeading(entry.date, style), text];
-  if (position > 0 && lines[position - 1]?.trim() !== "") block.unshift("");
-  if (position < lines.length && lines[position]?.trim() !== "") block.push("");
-  const next = [...lines];
-  next.splice(position, 0, ...block);
-  return next;
-}
-
-/**
- * Picks where a missing day belongs. When the file is organised into `## weekNN` sections the
- * day is placed inside the section for its ISO week; otherwise it is placed in date order.
- */
-function findNewDateHeadingPosition(lines: string[], date: string): number {
-  const headings = scanHeadings(lines);
-  const weeks = headings.filter((info) => info.kind === "week");
-  let start = 0;
-  let end = lines.length;
-
-  if (weeks.length) {
-    const target = isoWeek(date);
-    const exact = weeks.find((info) => info.week === target);
-    if (exact) {
-      start = exact.index + 1;
-      end = weeks.find((info) => info.index > exact.index)?.index ?? lines.length;
-    } else {
-      const later = weeks.find((info) => (info.week ?? 0) > target);
-      if (later) {
-        const previous = [...weeks].reverse().find((info) => info.index < later.index);
-        start = previous ? previous.index + 1 : 0;
-        end = later.index;
-      } else {
-        start = weeks[weeks.length - 1].index + 1;
-      }
-    }
-  }
-
-  const next = headings.find((info) => info.kind === "date" && info.index >= start && info.index < end && info.date! > date);
-  if (next) return next.index;
-
-  let position = end;
-  while (position > start && lines[position - 1].trim() === "") position--;
-  return position;
 }

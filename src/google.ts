@@ -81,10 +81,14 @@ export async function authorizeGoogle(clientId: string, clientSecret: string): P
 
 export async function refreshGoogleToken(clientId: string, clientSecret: string, refreshToken: string): Promise<GoogleTokens> {
   log("refresh started");
-  const response = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString() });
-  log("refresh response", { status: response.status });
-  if (response.status < 200 || response.status >= 300) throw new Error(`Google token refresh failed (${response.status}).`);
-  const data = response.json as { access_token: string; expires_in: number };
+  const response: any = await requestUrl({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString(), throw: false });
+  const details = describeGoogleResponse(response);
+  log("refresh response", { status: details.status, error: details.error, errorDescription: details.errorDescription });
+  if (details.status === undefined || details.status < 200 || details.status >= 300) {
+    throw new Error(`Google token refresh failed (${details.status ?? "unknown"}): ${details.message}`);
+  }
+  const data = response.json as { access_token?: string; expires_in?: number };
+  if (!data.access_token || !data.expires_in) throw new Error("Google refresh succeeded, but no usable access token was returned.");
   return { accessToken: data.access_token, refreshToken, expiresAt: Date.now() + data.expires_in * 1000 };
 }
 

@@ -1,5 +1,6 @@
 import { Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, MySystemTechoSettings } from "./types";
+import { pad2 } from "./utils/date";
 import { MySystemTechoSettingTab } from "./settings";
 import { MONTH_VIEW_TYPE, MonthGridView } from "./views/month";
 import { createGoogleEvent, listGoogleEvents, notifyGoogleError, refreshGoogleToken, toTechoEntries } from "./google";
@@ -65,9 +66,17 @@ export default class MySystemTechoPlugin extends Plugin {
     }
   }
 
+  /** Today when the displayed month is the current one, otherwise its first day: `2月30日` is not a date. */
+  private defaultEventDate(): string {
+    const { year, month } = this.settings;
+    const today = new Date();
+    const day = today.getFullYear() === year && today.getMonth() + 1 === month ? today.getDate() : 1;
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+  }
+
   async addGoogleCalendarEvent(date?: string): Promise<void> {
     try {
-      const targetDate = date || `${this.settings.year}-${String(this.settings.month).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`;
+      const targetDate = date || this.defaultEventDate();
       const title = window.prompt(`${targetDate} にGoogle Calendarへ追加する予定のタイトル`);
       if (!title?.trim()) return;
       const startTime = window.prompt("開始時刻（例: 09:00）。空欄なら終日予定", "09:00");
