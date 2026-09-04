@@ -22,7 +22,7 @@ __export(main_exports, {
   default: () => MySystemTechoPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_SETTINGS = {
@@ -32,8 +32,39 @@ var DEFAULT_SETTINGS = {
   month: (/* @__PURE__ */ new Date()).getMonth() + 1,
   googleClientId: "",
   googleClientSecret: "",
-  googleCalendarId: "primary"
+  googleCalendarId: "primary",
+  googleCalendarIds: ["primary"],
+  googleWriteCalendarId: "primary"
 };
+
+// src/utils/date.ts
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+function monthLabel(year, month) {
+  return `${year}\u5E74${month}\u6708`;
+}
+var WEEKDAY_JA = ["\u65E5", "\u6708", "\u706B", "\u6C34", "\u6728", "\u91D1", "\u571F"];
+function weekdayJa(isoDate) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return WEEKDAY_JA[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+}
+function isoWeek(isoDate) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1, day));
+  target.setUTCDate(target.getUTCDate() - (target.getUTCDay() + 6) % 7 + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - (firstThursday.getUTCDay() + 6) % 7 + 3);
+  return 1 + Math.round((target.getTime() - firstThursday.getTime()) / 6048e5);
+}
+function addDays(isoDate, amount) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + amount));
+  return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`;
+}
 
 // src/settings.ts
 var import_obsidian2 = require("obsidian");
@@ -43,7 +74,7 @@ var import_obsidian = require("obsidian");
 var AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 var TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 var CALENDAR_ENDPOINT = "https://www.googleapis.com/calendar/v3";
-var SCOPE = "https://www.googleapis.com/auth/calendar.events";
+var SCOPE = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 var LOG_PREFIX = "[My-system-Techo][Google OAuth]";
 function log(message, data) {
   console.log(LOG_PREFIX, message, data ?? "");
@@ -170,12 +201,56 @@ async function authorizeGoogle(clientId, clientSecret) {
 }
 async function refreshGoogleToken(clientId, clientSecret, refreshToken) {
   log("refresh started");
-  const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString() });
-  log("refresh response", { status: response.status });
-  if (response.status < 200 || response.status >= 300)
-    throw new Error(`Google token refresh failed (${response.status}).`);
+  const response = await (0, import_obsidian.requestUrl)({ url: TOKEN_ENDPOINT, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: clientId.trim(), client_secret: clientSecret.trim(), refresh_token: refreshToken, grant_type: "refresh_token" }).toString(), throw: false });
+  const details = describeGoogleResponse(response);
+  log("refresh response", { status: details.status, error: details.error, errorDescription: details.errorDescription });
+  if (details.status === void 0 || details.status < 200 || details.status >= 300) {
+    throw new Error(`Google token refresh failed (${details.status ?? "unknown"}): ${details.message}`);
+  }
   const data = response.json;
+  if (!data.access_token || !data.expires_in)
+    throw new Error("Google refresh succeeded, but no usable access token was returned.");
   return { accessToken: data.access_token, refreshToken, expiresAt: Date.now() + data.expires_in * 1e3 };
+}
+function hash4(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(36).padStart(4, "0").slice(-4);
+}
+function calendarSlug(calendarId) {
+  const local = (calendarId.split("@")[0] || calendarId).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${local.slice(0, 20) || "cal"}-${hash4(calendarId)}`;
+}
+async function listGoogleCalendars(accessToken) {
+  log("calendar list request started");
+  const calendars = [];
+  let pageToken;
+  do {
+    const url = new URL(`${CALENDAR_ENDPOINT}/users/me/calendarList`);
+    url.searchParams.set("maxResults", "250");
+    url.searchParams.set("minAccessRole", "reader");
+    if (pageToken)
+      url.searchParams.set("pageToken", pageToken);
+    const response = await (0, import_obsidian.requestUrl)({ url: url.toString(), headers: { Authorization: `Bearer ${accessToken}` }, throw: false });
+    if (response.status < 200 || response.status >= 300) {
+      const details = describeGoogleResponse(response);
+      log("calendar list failed", details);
+      if (details.status === 401 || details.status === 403) {
+        throw new Error("\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u3092\u53D6\u5F97\u3059\u308B\u6A29\u9650\u304C\u3042\u308A\u307E\u305B\u3093\u3002\u8A2D\u5B9A\u304B\u3089\u518D\u8A8D\u8A3C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+      }
+      throw new Error(`Google calendar list failed (${details.status ?? "unknown"}): ${details.message}`);
+    }
+    const data = response.json;
+    for (const item of data.items ?? []) {
+      calendars.push({ id: item.id, summary: item.summaryOverride || item.summary || item.id, primary: Boolean(item.primary) });
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  log("calendar list received", { count: calendars.length });
+  return calendars.sort((a, b) => Number(b.primary) - Number(a.primary) || a.summary.localeCompare(b.summary));
 }
 async function listGoogleEvents(accessToken, calendarId, timeMin, timeMax) {
   log("calendar request started", { calendarId, timeMin, timeMax });
@@ -216,6 +291,58 @@ async function createGoogleEvent(accessToken, calendarId, title, start, end) {
   log("calendar event created", { id: data.id });
   return { id: data.id, htmlLink: data.htmlLink };
 }
+var MAX_ALL_DAY_SPAN = 62;
+function localDate(value) {
+  return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+}
+function localTime(value) {
+  return `${pad2(value.getHours())}:${pad2(value.getMinutes())}`;
+}
+function sanitizeTitle(summary) {
+  return summary.replace(/[\r\n\t]+/g, " ").replace(/%%/g, "%").trim() || "(\u7121\u984C)";
+}
+function allDayRange(event) {
+  const start = event.start.slice(0, 10);
+  if (!start)
+    return [];
+  const end = event.end.slice(0, 10);
+  const days = [start];
+  if (end && end > start) {
+    let cursor = addDays(start, 1);
+    while (cursor < end && days.length < MAX_ALL_DAY_SPAN) {
+      days.push(cursor);
+      cursor = addDays(cursor, 1);
+    }
+  }
+  return days;
+}
+function toTechoEntries(events, year, month, calendarId) {
+  const prefix = `${year}-${pad2(month)}-`;
+  const slug = calendarSlug(calendarId);
+  const entries = [];
+  for (const event of events) {
+    const title = sanitizeTitle(event.summary);
+    if (event.allDay) {
+      const days = allDayRange(event);
+      for (const date2 of days) {
+        if (!date2.startsWith(prefix))
+          continue;
+        entries.push({ key: days.length > 1 ? `${slug}:${event.id}/${date2}` : `${slug}:${event.id}`, date: date2, title });
+      }
+      continue;
+    }
+    const start = new Date(event.start);
+    if (Number.isNaN(start.getTime()))
+      continue;
+    const date = localDate(start);
+    if (!date.startsWith(prefix))
+      continue;
+    const end = event.end ? new Date(event.end) : null;
+    const sameDay = end && !Number.isNaN(end.getTime()) && localDate(end) === date;
+    entries.push({ key: `${slug}:${event.id}`, date, time: sameDay ? `${localTime(start)}-${localTime(end)}` : localTime(start), title });
+  }
+  return entries.sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.title.localeCompare(b.title));
+}
 function notifyGoogleError(error) {
   log("error", error instanceof Error ? error.message : String(error));
   new import_obsidian.Notice(error instanceof Error ? error.message : "Google Calendar\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002");
@@ -226,6 +353,8 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
+    /** Fetched on demand and kept across re-renders so the picker survives a toggle. */
+    this.calendars = [];
   }
   display() {
     const { containerEl } = this;
@@ -243,10 +372,6 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
     }));
     new import_obsidian2.Setting(containerEl).setName("Google Client Secret").setDesc("Google Cloud\u306E\u540C\u3058OAuth\u30AF\u30E9\u30A4\u30A2\u30F3\u30C8\u306B\u8868\u793A\u3055\u308C\u308BClient Secret\u3002GitHub\u306B\u306F\u4FDD\u5B58\u3055\u308C\u307E\u305B\u3093\u3002").addText((text) => text.setPlaceholder("GOCSPX-...").setValue(this.plugin.settings.googleClientSecret).onChange(async (value) => {
       this.plugin.settings.googleClientSecret = value.trim();
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian2.Setting(containerEl).setName("Calendar ID").setDesc("\u53D6\u5F97\u30FB\u8FFD\u52A0\u3059\u308B\u30AB\u30EC\u30F3\u30C0\u30FC\u3002\u901A\u5E38\u306F primary\u3002").addText((text) => text.setPlaceholder("primary").setValue(this.plugin.settings.googleCalendarId).onChange(async (value) => {
-      this.plugin.settings.googleCalendarId = value.trim() || "primary";
       await this.plugin.saveSettings();
     }));
     const tokens = this.plugin.settings.googleTokens;
@@ -278,57 +403,280 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       }
     }));
     new import_obsidian2.Setting(containerEl).setName("\u63A5\u7D9A\u72B6\u614B").setDesc(isConnected ? "\u63A5\u7D9A\u6E08\u307F" : "\u672A\u63A5\u7D9A");
+    this.renderCalendarPicker(containerEl, isConnected);
+  }
+  async setCalendarIds(ids) {
+    const unique = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+    this.plugin.settings.googleCalendarIds = unique.length ? unique : ["primary"];
+    if (!this.plugin.settings.googleCalendarIds.includes(this.plugin.settings.googleWriteCalendarId)) {
+      this.plugin.settings.googleWriteCalendarId = this.plugin.settings.googleCalendarIds[0];
+    }
+    await this.plugin.saveSettings();
+    this.display();
+  }
+  renderCalendarPicker(containerEl, isConnected) {
+    const selected = this.plugin.syncCalendarIds();
+    containerEl.createEl("h3", { text: "\u540C\u671F\u3059\u308B\u30AB\u30EC\u30F3\u30C0\u30FC" });
+    containerEl.createEl("p", { text: "\u9078\u3093\u3060\u30AB\u30EC\u30F3\u30C0\u30FC\u306E\u4E88\u5B9A\u304C\u624B\u5E33\u306EMarkdown\u306B\u66F8\u304D\u8FBC\u307E\u308C\u307E\u3059\u3002\u30C1\u30A7\u30C3\u30AF\u3092\u5916\u3057\u305F\u30AB\u30EC\u30F3\u30C0\u30FC\u306F\u540C\u671F\u3055\u308C\u306A\u304F\u306A\u308A\u307E\u3059\u304C\u3001\u3059\u3067\u306B\u66F8\u304D\u8FBC\u307E\u308C\u305F\u884C\u306F\u305D\u306E\u307E\u307E\u6B8B\u308A\u307E\u3059\u3002" });
+    new import_obsidian2.Setting(containerEl).setName("\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u3092\u53D6\u5F97").setDesc(isConnected ? "Google\u304B\u3089\u8CFC\u8AAD\u4E2D\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u3092\u8AAD\u307F\u8FBC\u307F\u307E\u3059\u3002" : "\u5148\u306BGoogle Calendar\u3078\u63A5\u7D9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002").addButton((button) => button.setButtonText("\u53D6\u5F97").setDisabled(!isConnected).onClick(async () => {
+      button.setDisabled(true);
+      try {
+        this.calendars = await this.plugin.listGoogleCalendars();
+        new import_obsidian2.Notice(`${this.calendars.length}\u4EF6\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u3092\u53D6\u5F97\u3057\u307E\u3057\u305F\u3002`);
+        this.display();
+      } catch (error) {
+        notifyGoogleError(error);
+        button.setDisabled(false);
+      }
+    }));
+    if (this.calendars.length) {
+      for (const calendar of this.calendars) {
+        new import_obsidian2.Setting(containerEl).setName(calendar.primary ? `${calendar.summary}\uFF08\u30E1\u30A4\u30F3\uFF09` : calendar.summary).setDesc(calendar.id).addToggle((toggle) => toggle.setValue(selected.includes(calendar.id)).onChange(async (value) => {
+          const next = value ? [...selected, calendar.id] : selected.filter((id) => id !== calendar.id);
+          await this.setCalendarIds(next);
+        }));
+      }
+    }
+    for (const id of selected.filter((id2) => !this.calendars.some((calendar) => calendar.id === id2))) {
+      new import_obsidian2.Setting(containerEl).setName(id).setDesc("\u540C\u671F\u5BFE\u8C61").addExtraButton((button) => button.setIcon("trash").setTooltip("\u540C\u671F\u5BFE\u8C61\u304B\u3089\u5916\u3059").onClick(async () => {
+        await this.setCalendarIds(selected.filter((value) => value !== id));
+      }));
+    }
+    let manualId = "";
+    new import_obsidian2.Setting(containerEl).setName("\u30AB\u30EC\u30F3\u30C0\u30FCID\u3092\u624B\u52D5\u3067\u8FFD\u52A0").setDesc("\u4E00\u89A7\u3092\u53D6\u5F97\u3067\u304D\u306A\u3044\u5834\u5408\u306B\u3001Google\u30AB\u30EC\u30F3\u30C0\u30FC\u306EID\u3092\u76F4\u63A5\u5165\u529B\u3057\u307E\u3059\u3002").addText((text) => text.setPlaceholder("xxxx@group.calendar.google.com").onChange((value) => {
+      manualId = value;
+    })).addButton((button) => button.setButtonText("\u8FFD\u52A0").onClick(async () => {
+      if (!manualId.trim())
+        return;
+      await this.setCalendarIds([...selected, manualId]);
+    }));
+    new import_obsidian2.Setting(containerEl).setName("\u4E88\u5B9A\u306E\u8FFD\u52A0\u5148").setDesc("\u300CGoogle\u4E88\u5B9A\u8FFD\u52A0\u300D\u3067\u66F8\u304D\u8FBC\u3080\u30AB\u30EC\u30F3\u30C0\u30FC\u3002").addDropdown((dropdown) => {
+      for (const id of selected) {
+        dropdown.addOption(id, this.calendars.find((calendar) => calendar.id === id)?.summary || id);
+      }
+      dropdown.setValue(this.plugin.settings.googleWriteCalendarId || selected[0]);
+      dropdown.onChange(async (value) => {
+        this.plugin.settings.googleWriteCalendarId = value;
+        await this.plugin.saveSettings();
+      });
+    });
   }
 };
 
 // src/views/month.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/data/markdown.ts
+var import_obsidian3 = require("obsidian");
 var MONTH_HEADING = /^#{1,6}\s+(\d{4})年(\d{1,2})月\s*$/;
 var ISO_DATE_HEADING = /^#{1,6}\s+(\d{4})-(\d{2})-(\d{2})\s*$/;
 var JP_DATE_HEADING = /^#{1,6}\s+(\d{1,2})月(\d{1,2})日(?:\([^)]*\))?\s*$/;
-var ITEM = /^-\s+(?:\[([ xX])\]\s+)?(?:(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)\s+)?(.+?)\s*$/;
-function parseMarkdown(text, filePath) {
-  const lines = text.split(/\r?\n/);
-  const items = [];
-  let currentDate = "";
-  let currentYear = 0;
-  let currentMonth = 0;
+var WEEK_HEADING = /^#{1,6}\s+week\s*(\d{1,2})\s*$/i;
+var HEADING = /^(#{1,6})\s+/;
+var ITEM = /^　*-\s+(?:\[([ xX])\]\s+)?(?:(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)\s+)?(.+?)\s*$/;
+var GOOGLE_MARKER = /\s*%%gcal:([^%\s]+)%%\s*$/;
+function scanHeadings(lines) {
+  const headings = [];
+  let year = 0;
+  let month = 0;
   lines.forEach((line, index) => {
+    const level = line.match(HEADING)?.[1].length;
+    if (!level)
+      return;
     const monthHeading = line.match(MONTH_HEADING);
     if (monthHeading) {
-      currentYear = Number(monthHeading[1]);
-      currentMonth = Number(monthHeading[2]);
-      currentDate = "";
+      year = Number(monthHeading[1]);
+      month = Number(monthHeading[2]);
+      headings.push({ index, level, kind: "month" });
       return;
     }
     const isoHeading = line.match(ISO_DATE_HEADING);
     if (isoHeading) {
-      currentDate = `${isoHeading[1]}-${isoHeading[2]}-${isoHeading[3]}`;
-      currentYear = Number(isoHeading[1]);
-      currentMonth = Number(isoHeading[2]);
+      year = Number(isoHeading[1]);
+      month = Number(isoHeading[2]);
+      headings.push({ index, level, kind: "date", date: `${isoHeading[1]}-${isoHeading[2]}-${isoHeading[3]}` });
       return;
     }
     const jpHeading = line.match(JP_DATE_HEADING);
-    if (jpHeading && currentYear && currentMonth === Number(jpHeading[1])) {
-      currentDate = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(Number(jpHeading[2])).padStart(2, "0")}`;
+    if (jpHeading && year && month === Number(jpHeading[1])) {
+      headings.push({ index, level, kind: "date", date: `${year}-${pad2(month)}-${pad2(Number(jpHeading[2]))}` });
       return;
     }
-    const match = line.match(ITEM);
-    if (!match || !currentDate)
+    const weekHeading = line.match(WEEK_HEADING);
+    headings.push(weekHeading ? { index, level, kind: "week", week: Number(weekHeading[1]) } : { index, level, kind: "other" });
+  });
+  return headings;
+}
+function lineDates(lines) {
+  const byIndex = new Map(scanHeadings(lines).map((heading) => [heading.index, heading]));
+  const dates = [];
+  let current = "";
+  for (let index = 0; index < lines.length; index++) {
+    const heading = byIndex.get(index);
+    if (heading)
+      current = heading.kind === "date" ? heading.date : "";
+    dates.push(current);
+  }
+  return dates;
+}
+function parseMarkdown(text, filePath) {
+  const lines = text.split(/\r?\n/);
+  const dates = lineDates(lines);
+  const items = [];
+  lines.forEach((line, index) => {
+    const date = dates[index];
+    if (!date)
+      return;
+    const parsed = parseItemLine(line);
+    if (!parsed)
       return;
     items.push({
       id: `${filePath}:${index + 1}`,
-      date: currentDate,
-      time: match[2] || void 0,
-      title: match[3],
-      kind: match[1] !== void 0 ? "task" : "event",
-      checked: Boolean(match[1] && match[1].toLowerCase() === "x"),
-      sourceLine: index + 1
+      date,
+      time: parsed.time,
+      title: parsed.title,
+      kind: parsed.kind,
+      checked: parsed.checked,
+      sourceLine: index + 1,
+      googleId: parsed.googleId
     });
   });
   return items;
+}
+function parseItemLine(line) {
+  const marker = line.match(GOOGLE_MARKER);
+  const match = (marker ? line.slice(0, marker.index) : line).match(ITEM);
+  if (!match)
+    return null;
+  return {
+    time: match[2] || void 0,
+    title: match[3],
+    kind: match[1] !== void 0 ? "task" : "event",
+    checked: Boolean(match[1] && match[1].toLowerCase() === "x"),
+    googleId: marker?.[1]
+  };
+}
+function renderItemLine(item) {
+  const checkbox = item.kind === "task" ? `[${item.checked ? "x" : " "}] ` : "";
+  return `- ${checkbox}${item.time ? `${item.time} ` : ""}${item.title}`;
+}
+function joinPath(folder, name) {
+  const prefix = folder.replace(/^\/+|\/+$/g, "");
+  return prefix ? `${prefix}/${name}` : name;
+}
+function monthFilePath(folder, year, month) {
+  return joinPath(folder, `${year}-${pad2(month)}.md`);
+}
+async function ensureFolder(app, folder) {
+  const prefix = folder.replace(/^\/+|\/+$/g, "");
+  if (!prefix)
+    return;
+  let current = "";
+  for (const segment of prefix.split("/")) {
+    current = current ? `${current}/${segment}` : segment;
+    if (app.vault.getAbstractFileByPath(current))
+      continue;
+    try {
+      await app.vault.createFolder(current);
+    } catch {
+    }
+  }
+}
+async function openMonthFile(app, folder, year, month) {
+  const path = monthFilePath(folder, year, month);
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian3.TFile)
+    return existing;
+  await ensureFolder(app, folder);
+  return app.vault.create(path, `# ${year}\u5E74${month}\u6708
+`);
+}
+var DEFAULT_DATE_HEADING_STYLE = { level: 2, iso: false, weekday: true, blankAfterHeading: true };
+function detectDateHeadingStyle(lines) {
+  const heading = scanHeadings(lines).find((info) => info.kind === "date");
+  if (!heading)
+    return DEFAULT_DATE_HEADING_STYLE;
+  const text = lines[heading.index];
+  return {
+    level: heading.level,
+    iso: /\d{4}-\d{2}-\d{2}/.test(text),
+    weekday: /\([^)]*\)\s*$/.test(text),
+    blankAfterHeading: (lines[heading.index + 1] ?? "").trim() === ""
+  };
+}
+function renderDateHeading(date, style) {
+  const hashes = "#".repeat(style.level);
+  if (style.iso)
+    return `${hashes} ${date}`;
+  const [, month, day] = date.split("-").map(Number);
+  return `${hashes} ${month}\u6708${day}\u65E5${style.weekday ? `(${weekdayJa(date)})` : ""}`;
+}
+function insertItemLine(lines, date, text, style) {
+  const dates = lineDates(lines);
+  const headings = scanHeadings(lines);
+  const headingIndexes = new Set(headings.map((info) => info.index));
+  const next = [...lines];
+  let lastOwned = -1;
+  for (let index = 0; index < lines.length; index++) {
+    if (dates[index] === date && lines[index].trim() !== "" && !headingIndexes.has(index))
+      lastOwned = index;
+  }
+  if (lastOwned >= 0) {
+    next.splice(lastOwned + 1, 0, text);
+    return next;
+  }
+  const heading = headings.find((info) => info.kind === "date" && info.date === date);
+  if (heading) {
+    const position2 = heading.index + ((lines[heading.index + 1] ?? "").trim() === "" ? 2 : 1);
+    next.splice(position2, 0, .../^#{1,6}\s/.test(lines[position2] ?? "") ? [text, ""] : [text]);
+    return next;
+  }
+  const position = findNewDateHeadingPosition(lines, date);
+  const block = style.blankAfterHeading ? [renderDateHeading(date, style), "", text] : [renderDateHeading(date, style), text];
+  if (position > 0 && lines[position - 1]?.trim() !== "")
+    block.unshift("");
+  if (position < lines.length && lines[position]?.trim() !== "")
+    block.push("");
+  next.splice(position, 0, ...block);
+  return next;
+}
+function findNewDateHeadingPosition(lines, date) {
+  const headings = scanHeadings(lines);
+  const weeks = headings.filter((info) => info.kind === "week");
+  let start = 0;
+  let end = lines.length;
+  if (weeks.length) {
+    const target = isoWeek(date);
+    const exact = weeks.find((info) => info.week === target);
+    if (exact) {
+      start = exact.index + 1;
+      end = weeks.find((info) => info.index > exact.index)?.index ?? lines.length;
+    } else {
+      const later = weeks.find((info) => (info.week ?? 0) > target);
+      if (later) {
+        const previous = [...weeks].reverse().find((info) => info.index < later.index);
+        start = previous ? previous.index + 1 : 0;
+        end = later.index;
+      } else {
+        start = weeks[weeks.length - 1].index + 1;
+      }
+    }
+  }
+  const next = headings.find((info) => info.kind === "date" && info.index >= start && info.index < end && info.date > date);
+  if (next)
+    return next.index;
+  let position = end;
+  while (position > start && lines[position - 1].trim() === "")
+    position--;
+  return position;
+}
+async function appendTechoItem(app, folder, item) {
+  const [year, month] = item.date.split("-").map(Number);
+  const file = await openMonthFile(app, folder, year, month);
+  const lines = (await app.vault.read(file)).split(/\r?\n/);
+  const updated = insertItemLine(lines, item.date, renderItemLine(item), detectDateHeadingStyle(lines));
+  await app.vault.modify(file, updated.join("\n"));
+  return file.path;
 }
 async function readFolder(app, folder, year, month) {
   const prefix = folder.replace(/\/+$/, "");
@@ -344,47 +692,10 @@ async function readFolder(app, folder, year, month) {
   }
   return result;
 }
-async function appendItem(app, file, item) {
-  const current = await app.vault.read(file);
-  const lines = current.split(/\r?\n/);
-  const isoHeading = `## ${item.date}`;
-  const dateParts = item.date.split("-").map(Number);
-  const jpHeading = `## ${dateParts[1]}\u6708${dateParts[2]}\u65E5`;
-  const headingIndex = lines.findIndex((line2) => line2.trim() === isoHeading || line2.trim() === jpHeading || line2.match(JP_DATE_HEADING)?.[0] === line2.trim() && line2.includes(`${dateParts[1]}\u6708${dateParts[2]}\u65E5`));
-  const prefix = item.kind === "task" ? `- [${item.checked ? "x" : " "}] ` : "- ";
-  const line = `${prefix}${item.time ? `${item.time} ` : ""}${item.title}`;
-  if (headingIndex >= 0)
-    lines.splice(headingIndex + 1, 0, line);
-  else {
-    if (lines.length && lines[lines.length - 1] !== "")
-      lines.push("");
-    lines.push(isoHeading, line);
-  }
-  await app.vault.modify(file, lines.join("\n"));
-}
-async function createMarkdownFile(app, path, date) {
-  const [year, month, day] = date.split("-").map(Number);
-  const content = `# ${year}\u5E74${month}\u6708
-
-## ${month}\u6708${day}\u65E5
-`;
-  return app.vault.create(path, content);
-}
-
-// src/utils/date.ts
-function pad2(value) {
-  return String(value).padStart(2, "0");
-}
-function daysInMonth(year, month) {
-  return new Date(year, month, 0).getDate();
-}
-function monthLabel(year, month) {
-  return `${year}\u5E74${month}\u6708`;
-}
 
 // src/views/month.ts
 var MONTH_VIEW_TYPE = "my-system-techo-month-grid";
-var MonthGridView = class extends import_obsidian3.ItemView {
+var MonthGridView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -416,6 +727,7 @@ var MonthGridView = class extends import_obsidian3.ItemView {
     const title = toolbar.createEl("strong", { text: monthLabel(this.year, this.month) });
     const next = toolbar.createEl("button", { text: "\u203A" });
     const today = toolbar.createEl("button", { text: "\u4ECA\u65E5" });
+    const googleSync = toolbar.createEl("button", { text: "Google\u53D6\u5F97" });
     const googleAdd = toolbar.createEl("button", { text: "Google\u4E88\u5B9A\u8FFD\u52A0" });
     prev.onclick = async () => {
       await this.shift(-1);
@@ -429,6 +741,16 @@ var MonthGridView = class extends import_obsidian3.ItemView {
       this.plugin.settings.month = d.getMonth() + 1;
       await this.plugin.saveSettings();
       await this.render();
+    };
+    googleSync.onclick = async () => {
+      googleSync.disabled = true;
+      googleSync.setText("\u53D6\u5F97\u4E2D\u2026");
+      try {
+        await this.plugin.syncGoogleCalendar();
+      } finally {
+        googleSync.disabled = false;
+        googleSync.setText("Google\u53D6\u5F97");
+      }
     };
     googleAdd.onclick = () => void this.plugin.addGoogleCalendarEvent();
     const data = await readFolder(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
@@ -466,7 +788,7 @@ var MonthGridView = class extends import_obsidian3.ItemView {
     }
   }
   renderItem(cell, item) {
-    const row = cell.createDiv({ cls: "mst-item" });
+    const row = cell.createDiv({ cls: item.googleId ? "mst-item is-google" : "mst-item" });
     row.setText(`${item.time ? `${item.time} ` : ""}${item.kind === "task" ? `${item.checked ? "\u2611" : "\u2610"} ` : ""}${item.title}`);
   }
   async addItem(date) {
@@ -474,12 +796,12 @@ var MonthGridView = class extends import_obsidian3.ItemView {
     if (!title?.trim())
       return;
     const isTask = window.confirm("\u30BF\u30B9\u30AF\u3068\u3057\u3066\u767B\u9332\u3057\u307E\u3059\u304B\uFF1F\nOK = \u30BF\u30B9\u30AF / \u30AD\u30E3\u30F3\u30BB\u30EB = \u4E88\u5B9A");
-    const folder = this.plugin.settings.sourceFolder.replace(/\/+$/, "");
-    const path = `${folder}/${date}.md`;
-    let file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian3.TFile))
-      file = await createMarkdownFile(this.app, path, date);
-    await appendItem(this.app, file, { date, title: title.trim(), kind: isTask ? "task" : "event", checked: false });
+    try {
+      await appendTechoItem(this.app, this.plugin.settings.sourceFolder, { date, title: title.trim(), kind: isTask ? "task" : "event", checked: false });
+    } catch (error) {
+      new import_obsidian4.Notice(error instanceof Error ? error.message : "\u624B\u5E33\u3078\u306E\u66F8\u304D\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002");
+      return;
+    }
     await this.render();
   }
   async shift(delta) {
@@ -491,14 +813,112 @@ var MonthGridView = class extends import_obsidian3.ItemView {
   }
 };
 
+// src/data/googleSync.ts
+function renderEntryLine(entry) {
+  return `- ${entry.time ? `${entry.time} ` : ""}${entry.title} %%gcal:${entry.key}%%`;
+}
+async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs) {
+  const path = monthFilePath(folder, year, month);
+  const file = await openMonthFile(app, folder, year, month);
+  const original = await app.vault.read(file);
+  let lines = original.split(/\r?\n/);
+  const style = detectDateHeadingStyle(lines);
+  const result = { path, added: 0, updated: 0, adopted: 0, removed: 0 };
+  const marked = collectMarkedLines(lines, syncedSlugs[0]);
+  const wanted = new Map(entries.map((entry) => [entry.key, entry]));
+  const replacements = /* @__PURE__ */ new Map();
+  const removals = /* @__PURE__ */ new Set();
+  const insertions = [];
+  const claimed = /* @__PURE__ */ new Set();
+  for (const entry of entries) {
+    const existing = marked.get(entry.key);
+    const desired = renderEntryLine(entry);
+    if (existing) {
+      if (existing.date === entry.date && lines[existing.index] === desired)
+        continue;
+      if (existing.date === entry.date) {
+        replacements.set(existing.index, desired);
+        result.updated++;
+      } else {
+        removals.add(existing.index);
+        insertions.push(entry);
+        result.updated++;
+      }
+      continue;
+    }
+    const adoptable = findAdoptableLine(lines, entry, claimed);
+    if (adoptable !== null) {
+      claimed.add(adoptable);
+      replacements.set(adoptable, `${lines[adoptable].replace(/\s+$/, "")} %%gcal:${entry.key}%%`);
+      result.adopted++;
+      continue;
+    }
+    insertions.push(entry);
+    result.added++;
+  }
+  for (const [key, existing] of marked) {
+    if (wanted.has(key) || !syncedSlugs.includes(keySlug(key)))
+      continue;
+    removals.add(existing.index);
+    result.removed++;
+  }
+  for (const [index, text] of replacements)
+    lines[index] = text;
+  if (removals.size)
+    lines = lines.filter((_, index) => !removals.has(index));
+  for (const entry of insertions)
+    lines = insertItemLine(lines, entry.date, renderEntryLine(entry), style);
+  const updated = lines.join("\n");
+  if (updated !== original)
+    await app.vault.modify(file, updated);
+  return result;
+}
+function keySlug(key) {
+  return key.slice(0, key.indexOf(":"));
+}
+function collectMarkedLines(lines, legacySlug) {
+  const dates = lineDates(lines);
+  const marked = /* @__PURE__ */ new Map();
+  lines.forEach((line, index) => {
+    const raw = parseItemLine(line)?.googleId;
+    if (!raw)
+      return;
+    const key = raw.includes(":") ? raw : `${legacySlug}:${raw}`;
+    if (!marked.has(key))
+      marked.set(key, { index, date: dates[index] });
+  });
+  return marked;
+}
+function findAdoptableLine(lines, entry, claimed) {
+  const dates = lineDates(lines);
+  for (let index = 0; index < lines.length; index++) {
+    if (dates[index] !== entry.date || claimed.has(index))
+      continue;
+    const parsed = parseItemLine(lines[index]);
+    if (!parsed || parsed.googleId)
+      continue;
+    if ((parsed.time ?? "") === (entry.time ?? "") && parsed.title === entry.title)
+      return index;
+  }
+  return null;
+}
+
 // src/main.ts
-var MySystemTechoPlugin = class extends import_obsidian4.Plugin {
+var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
   }
   async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const saved = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    if (!Array.isArray(saved?.googleCalendarIds) || !saved.googleCalendarIds.length) {
+      this.settings.googleCalendarIds = [saved?.googleCalendarId || DEFAULT_SETTINGS.googleCalendarIds[0]];
+    }
+    if (!this.settings.googleCalendarIds.includes(this.settings.googleWriteCalendarId)) {
+      this.settings.googleWriteCalendarId = this.settings.googleCalendarIds[0];
+    }
+    await this.saveSettings();
     this.registerView(MONTH_VIEW_TYPE, (leaf) => new MonthGridView(leaf, this));
     this.addRibbonIcon("calendar-days", "My-system-Techo", () => void this.activateView());
     this.addCommand({ id: "open-month-grid", name: "Open month grid", callback: () => void this.activateView() });
@@ -530,20 +950,60 @@ var MySystemTechoPlugin = class extends import_obsidian4.Plugin {
     await this.saveSettings();
     return refreshed.accessToken;
   }
+  syncCalendarIds() {
+    const ids = this.settings.googleCalendarIds.map((id) => id.trim()).filter(Boolean);
+    return ids.length ? ids : ["primary"];
+  }
+  async listGoogleCalendars() {
+    return listGoogleCalendars(await this.getGoogleAccessToken());
+  }
+  /** Mirrors the displayed month of every selected calendar into `<sourceFolder>/YYYY-MM.md`. */
   async syncGoogleCalendar() {
     try {
+      const { year, month } = this.settings;
       const accessToken = await this.getGoogleAccessToken();
-      const start = new Date(this.settings.year, this.settings.month - 1, 1);
-      const end = new Date(this.settings.year, this.settings.month, 1);
-      const events = await listGoogleEvents(accessToken, this.settings.googleCalendarId || "primary", start.toISOString(), end.toISOString());
-      new import_obsidian4.Notice(`Google Calendar: ${events.length}\u4EF6\u53D6\u5F97\u3057\u307E\u3057\u305F\u3002`);
+      const start = new Date(year, month - 1, 1).toISOString();
+      const end = new Date(year, month, 1).toISOString();
+      const entries = [];
+      const syncedSlugs = [];
+      const failed = [];
+      for (const calendarId of this.syncCalendarIds()) {
+        try {
+          const events = await listGoogleEvents(accessToken, calendarId, start, end);
+          entries.push(...toTechoEntries(events, year, month, calendarId));
+          syncedSlugs.push(calendarSlug(calendarId));
+        } catch (error) {
+          failed.push(calendarId);
+          notifyGoogleError(error);
+        }
+      }
+      if (!syncedSlugs.length)
+        throw new Error("\u3069\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u304B\u3089\u3082\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002");
+      const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs);
+      const summary = `${result.path}: \u8FFD\u52A0${result.added} / \u66F4\u65B0${result.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${result.adopted} / \u524A\u9664${result.removed}`;
+      new import_obsidian5.Notice(failed.length ? `${summary}\uFF08${failed.length}\u4EF6\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u306F\u53D6\u5F97\u5931\u6557\uFF09` : summary);
+      await this.refreshMonthViews();
     } catch (error) {
       notifyGoogleError(error);
     }
   }
+  async refreshMonthViews() {
+    for (const leaf of this.app.workspace.getLeavesOfType(MONTH_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof MonthGridView)
+        await view.render();
+    }
+  }
+  /** Today when the displayed month is the current one, otherwise its first day: `2月30日` is not a date. */
+  defaultEventDate() {
+    const { year, month } = this.settings;
+    const today = /* @__PURE__ */ new Date();
+    const day = today.getFullYear() === year && today.getMonth() + 1 === month ? today.getDate() : 1;
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+  }
   async addGoogleCalendarEvent(date) {
     try {
-      const targetDate = date || `${this.settings.year}-${String(this.settings.month).padStart(2, "0")}-${String((/* @__PURE__ */ new Date()).getDate()).padStart(2, "0")}`;
+      const targetDate = date || this.defaultEventDate();
       const title = window.prompt(`${targetDate} \u306BGoogle Calendar\u3078\u8FFD\u52A0\u3059\u308B\u4E88\u5B9A\u306E\u30BF\u30A4\u30C8\u30EB`);
       if (!title?.trim())
         return;
@@ -570,8 +1030,9 @@ var MySystemTechoPlugin = class extends import_obsidian4.Plugin {
           throw new Error("\u7D42\u4E86\u6642\u523B\u306F\u958B\u59CB\u6642\u523B\u3088\u308A\u5F8C\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
       }
       const accessToken = await this.getGoogleAccessToken();
-      const result = await createGoogleEvent(accessToken, this.settings.googleCalendarId || "primary", title.trim(), start, end);
-      new import_obsidian4.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
+      const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
+      new import_obsidian5.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
+      await this.syncGoogleCalendar();
       if (result.htmlLink)
         console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
     } catch (error) {
