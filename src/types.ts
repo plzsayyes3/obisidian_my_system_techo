@@ -9,6 +9,8 @@ export interface TechoItem {
   kind: ItemKind;
   checked: boolean;
   sourceLine: number;
+  /** Set when the line carries a %%gcal:...%% marker, i.e. it is mirrored from Google Calendar. */
+  googleId?: string;
 }
 
 export interface MySystemTechoSettings {

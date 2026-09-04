@@ -4,52 +4,125 @@ import { TechoItem } from "../types";
 const MONTH_HEADING = /^#{1,6}\s+(\d{4})年(\d{1,2})月\s*$/;
 const ISO_DATE_HEADING = /^#{1,6}\s+(\d{4})-(\d{2})-(\d{2})\s*$/;
 const JP_DATE_HEADING = /^#{1,6}\s+(\d{1,2})月(\d{1,2})日(?:\([^)]*\))?\s*$/;
+const WEEK_HEADING = /^#{1,6}\s+week\s*(\d{1,2})\s*$/i;
+const HEADING = /^(#{1,6})\s+/;
 const ITEM = /^-\s+(?:\[([ xX])\]\s+)?(?:(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)\s+)?(.+?)\s*$/;
 
-export function parseMarkdown(text: string, filePath: string): TechoItem[] {
-  const lines = text.split(/\r?\n/);
-  const items: TechoItem[] = [];
-  let currentDate = "";
-  let currentYear = 0;
-  let currentMonth = 0;
+/** Marks a line as owned by a Google Calendar event so re-syncing updates it instead of duplicating it. */
+export const GOOGLE_MARKER = /\s*%%gcal:([^%\s]+)%%\s*$/;
+
+export type HeadingKind = "month" | "date" | "week" | "other";
+export interface HeadingInfo { index: number; level: number; kind: HeadingKind; date?: string; week?: number; }
+
+/** Classifies every heading in the file and resolves 9月1日-style headings against the enclosing 年月 heading. */
+export function scanHeadings(lines: string[]): HeadingInfo[] {
+  const headings: HeadingInfo[] = [];
+  let year = 0;
+  let month = 0;
 
   lines.forEach((line, index) => {
+    const level = line.match(HEADING)?.[1].length;
+    if (!level) return;
+
     const monthHeading = line.match(MONTH_HEADING);
     if (monthHeading) {
-      currentYear = Number(monthHeading[1]);
-      currentMonth = Number(monthHeading[2]);
-      currentDate = "";
+      year = Number(monthHeading[1]);
+      month = Number(monthHeading[2]);
+      headings.push({ index, level, kind: "month" });
       return;
     }
 
     const isoHeading = line.match(ISO_DATE_HEADING);
     if (isoHeading) {
-      currentDate = `${isoHeading[1]}-${isoHeading[2]}-${isoHeading[3]}`;
-      currentYear = Number(isoHeading[1]);
-      currentMonth = Number(isoHeading[2]);
+      year = Number(isoHeading[1]);
+      month = Number(isoHeading[2]);
+      headings.push({ index, level, kind: "date", date: `${isoHeading[1]}-${isoHeading[2]}-${isoHeading[3]}` });
       return;
     }
 
     const jpHeading = line.match(JP_DATE_HEADING);
-    if (jpHeading && currentYear && currentMonth === Number(jpHeading[1])) {
-      currentDate = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(Number(jpHeading[2])).padStart(2, "0")}`;
+    if (jpHeading && year && month === Number(jpHeading[1])) {
+      headings.push({ index, level, kind: "date", date: `${year}-${String(month).padStart(2, "0")}-${String(Number(jpHeading[2])).padStart(2, "0")}` });
       return;
     }
 
-    // Non-date headings such as "week35" and "日付未定" do not change currentDate.
-    const match = line.match(ITEM);
-    if (!match || !currentDate) return;
+    const weekHeading = line.match(WEEK_HEADING);
+    headings.push(weekHeading ? { index, level, kind: "week", week: Number(weekHeading[1]) } : { index, level, kind: "other" });
+  });
+
+  return headings;
+}
+
+/**
+ * Maps every line to the date whose section it belongs to. Non-date headings such as
+ * `## week36`, `### 日付未定` and `### タスク` end the previous date section rather than
+ * extending it, so their items are not attributed to the day above them.
+ */
+export function lineDates(lines: string[]): string[] {
+  const headings = scanHeadings(lines);
+  const byIndex = new Map(headings.map((heading) => [heading.index, heading]));
+  const dates: string[] = [];
+  let current = "";
+  for (let index = 0; index < lines.length; index++) {
+    const heading = byIndex.get(index);
+    if (heading) current = heading.kind === "date" ? heading.date! : "";
+    dates.push(current);
+  }
+  return dates;
+}
+
+export function parseMarkdown(text: string, filePath: string): TechoItem[] {
+  const lines = text.split(/\r?\n/);
+  const dates = lineDates(lines);
+  const items: TechoItem[] = [];
+
+  lines.forEach((line, index) => {
+    const date = dates[index];
+    if (!date) return;
+    const marker = line.match(GOOGLE_MARKER);
+    const match = (marker ? line.slice(0, marker.index) : line).match(ITEM);
+    if (!match) return;
     items.push({
       id: `${filePath}:${index + 1}`,
-      date: currentDate,
+      date,
       time: match[2] || undefined,
       title: match[3],
       kind: match[1] !== undefined ? "task" : "event",
       checked: Boolean(match[1] && match[1].toLowerCase() === "x"),
       sourceLine: index + 1,
+      googleId: marker?.[1],
     });
   });
   return items;
+}
+
+/** Splits an item line into the pieces the Google sync compares against, or null if it is not an item. */
+export function parseItemLine(line: string): { time?: string; title: string; googleId?: string } | null {
+  const marker = line.match(GOOGLE_MARKER);
+  const match = (marker ? line.slice(0, marker.index) : line).match(ITEM);
+  if (!match) return null;
+  return { time: match[2] || undefined, title: match[3], googleId: marker?.[1] };
+}
+
+export function joinPath(folder: string, name: string): string {
+  const prefix = folder.replace(/^\/+|\/+$/g, "");
+  return prefix ? `${prefix}/${name}` : name;
+}
+
+/** Creates every missing segment of `folder`, so the first write into a fresh vault does not fail. */
+export async function ensureFolder(app: App, folder: string): Promise<void> {
+  const prefix = folder.replace(/^\/+|\/+$/g, "");
+  if (!prefix) return;
+  let current = "";
+  for (const segment of prefix.split("/")) {
+    current = current ? `${current}/${segment}` : segment;
+    if (app.vault.getAbstractFileByPath(current)) continue;
+    try {
+      await app.vault.createFolder(current);
+    } catch {
+      // Another writer may have created it first; a real failure surfaces on the following create().
+    }
+  }
 }
 
 export async function readFolder(app: App, folder: string, year: number, month: number): Promise<{ file: TFile; items: TechoItem[] }[]> {

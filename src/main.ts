@@ -2,7 +2,8 @@ import { Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, MySystemTechoSettings } from "./types";
 import { MySystemTechoSettingTab } from "./settings";
 import { MONTH_VIEW_TYPE, MonthGridView } from "./views/month";
-import { createGoogleEvent, listGoogleEvents, notifyGoogleError, refreshGoogleToken } from "./google";
+import { createGoogleEvent, listGoogleEvents, notifyGoogleError, refreshGoogleToken, toTechoEntries } from "./google";
+import { applyGoogleEvents } from "./data/googleSync";
 
 export default class MySystemTechoPlugin extends Plugin {
   settings: MySystemTechoSettings = DEFAULT_SETTINGS;
@@ -40,15 +41,27 @@ export default class MySystemTechoPlugin extends Plugin {
     return refreshed.accessToken;
   }
 
+  /** Mirrors the displayed month from Google Calendar into `<sourceFolder>/YYYY-MM.md`. */
   async syncGoogleCalendar(): Promise<void> {
     try {
+      const { year, month } = this.settings;
       const accessToken = await this.getGoogleAccessToken();
-      const start = new Date(this.settings.year, this.settings.month - 1, 1);
-      const end = new Date(this.settings.year, this.settings.month, 1);
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 1);
       const events = await listGoogleEvents(accessToken, this.settings.googleCalendarId || "primary", start.toISOString(), end.toISOString());
-      new Notice(`Google Calendar: ${events.length}件取得しました。`);
+      const entries = toTechoEntries(events, year, month);
+      const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries);
+      new Notice(`${result.path}: 追加${result.added} / 更新${result.updated} / 既存に紐付け${result.adopted} / 削除${result.removed}`);
+      await this.refreshMonthViews();
     } catch (error) {
       notifyGoogleError(error);
+    }
+  }
+
+  async refreshMonthViews(): Promise<void> {
+    for (const leaf of this.app.workspace.getLeavesOfType(MONTH_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof MonthGridView) await view.render();
     }
   }
 
@@ -78,6 +91,7 @@ export default class MySystemTechoPlugin extends Plugin {
       const accessToken = await this.getGoogleAccessToken();
       const result = await createGoogleEvent(accessToken, this.settings.googleCalendarId || "primary", title.trim(), start, end);
       new Notice(`Google Calendarに「${title.trim()}」を追加しました。`);
+      await this.syncGoogleCalendar();
       if (result.htmlLink) console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
     } catch (error) {
       notifyGoogleError(error);

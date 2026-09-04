@@ -7,7 +7,10 @@
 .mst-day.is-outside { background: var(--background-secondary); opacity: 0.45; }
 .mst-day-number { font-weight: 700; margin-bottom: 6px; }
 .mst-item { padding: 3px 4px; margin: 2px 0; border-radius: 4px; background: var(--background-secondary); overflow-wrap: anywhere; }
-.mst-add { margin-top: 6px; opacity: 0.7; }
+.mst-item.is-google { border-left: 3px solid var(--interactive-accent); }
+.mst-day-actions { display: flex; gap: 4px; margin-top: 6px; }
+.mst-add, .mst-add-google { opacity: 0.7; padding: 0 6px; }
+.mst-add:hover, .mst-add-google:hover { opacity: 1; }
 @media (max-width: 700px) {
   .mst-grid { grid-template-columns: repeat(7, minmax(70px, 1fr)); overflow-x: auto; }
   .mst-grid-header, .mst-day { min-height: 90px; padding: 4px; font-size: 0.85em; }

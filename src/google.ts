@@ -1,4 +1,6 @@
 import { Notice, requestUrl } from "obsidian";
+import { addDays, pad2 } from "./utils/date";
+import type { GoogleTechoEntry } from "./data/googleSync";
 
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -118,6 +120,62 @@ export async function createGoogleEvent(accessToken: string, calendarId: string,
   if (!data.id) throw new Error("Google Calendar event was created but no event ID was returned.");
   log("calendar event created", { id: data.id });
   return { id: data.id, htmlLink: data.htmlLink };
+}
+
+const MAX_ALL_DAY_SPAN = 62;
+
+function localDate(value: Date): string { return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`; }
+function localTime(value: Date): string { return `${pad2(value.getHours())}:${pad2(value.getMinutes())}`; }
+
+/**
+ * `%%` would break the line marker and newlines would break the list item. Interior spacing is
+ * left alone: summaries often contain full-width spaces that must survive to match hand-written lines.
+ */
+function sanitizeTitle(summary: string): string {
+  return summary.replace(/[\r\n\t]+/g, " ").replace(/%%/g, "%").trim() || "(無題)";
+}
+
+function allDayRange(event: GoogleCalendarEvent): string[] {
+  const start = event.start.slice(0, 10);
+  if (!start) return [];
+  const end = event.end.slice(0, 10);
+  const days = [start];
+  if (end && end > start) {
+    let cursor = addDays(start, 1);
+    while (cursor < end && days.length < MAX_ALL_DAY_SPAN) { days.push(cursor); cursor = addDays(cursor, 1); }
+  }
+  return days;
+}
+
+/**
+ * Flattens Google events into one techo line per day, dropping anything outside the target month.
+ * Times are rendered in the local timezone, which is what the techo records.
+ */
+export function toTechoEntries(events: GoogleCalendarEvent[], year: number, month: number): GoogleTechoEntry[] {
+  const prefix = `${year}-${pad2(month)}-`;
+  const entries: GoogleTechoEntry[] = [];
+
+  for (const event of events) {
+    const title = sanitizeTitle(event.summary);
+    if (event.allDay) {
+      const days = allDayRange(event);
+      for (const date of days) {
+        if (!date.startsWith(prefix)) continue;
+        entries.push({ key: days.length > 1 ? `${event.id}/${date}` : event.id, date, title });
+      }
+      continue;
+    }
+
+    const start = new Date(event.start);
+    if (Number.isNaN(start.getTime())) continue;
+    const date = localDate(start);
+    if (!date.startsWith(prefix)) continue;
+    const end = event.end ? new Date(event.end) : null;
+    const sameDay = end && !Number.isNaN(end.getTime()) && localDate(end) === date;
+    entries.push({ key: event.id, date, time: sameDay ? `${localTime(start)}-${localTime(end!)}` : localTime(start), title });
+  }
+
+  return entries.sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.title.localeCompare(b.title));
 }
 
 export function notifyGoogleError(error: unknown): void { log("error", error instanceof Error ? error.message : String(error)); new Notice(error instanceof Error ? error.message : "Google Calendarとの通信に失敗しました。"); }

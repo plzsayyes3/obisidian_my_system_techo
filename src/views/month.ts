@@ -27,6 +27,7 @@ export class MonthGridView extends ItemView {
     const title = toolbar.createEl("strong", { text: monthLabel(this.year, this.month) });
     const next = toolbar.createEl("button", { text: "›" });
     const today = toolbar.createEl("button", { text: "今日" });
+    const googleSync = toolbar.createEl("button", { text: "Google取得" });
     const googleAdd = toolbar.createEl("button", { text: "Google予定追加" });
     prev.onclick = async () => { await this.shift(-1); };
     next.onclick = async () => { await this.shift(1); };
@@ -36,6 +37,17 @@ export class MonthGridView extends ItemView {
       this.plugin.settings.month = d.getMonth() + 1;
       await this.plugin.saveSettings();
       await this.render();
+    };
+    googleSync.onclick = async () => {
+      googleSync.disabled = true;
+      googleSync.setText("取得中…");
+      try {
+        await this.plugin.syncGoogleCalendar();
+      } finally {
+        // syncGoogleCalendar re-renders on success, which replaces this button.
+        googleSync.disabled = false;
+        googleSync.setText("Google取得");
+      }
     };
     googleAdd.onclick = () => void this.plugin.addGoogleCalendarEvent();
 
@@ -72,7 +84,7 @@ export class MonthGridView extends ItemView {
   }
 
   private renderItem(cell: HTMLElement, item: TechoItem): void {
-    const row = cell.createDiv({ cls: "mst-item" });
+    const row = cell.createDiv({ cls: item.googleId ? "mst-item is-google" : "mst-item" });
     row.setText(`${item.time ? `${item.time} ` : ""}${item.kind === "task" ? `${item.checked ? "☑" : "☐"} ` : ""}${item.title}`);
   }
 

@@ -12,6 +12,23 @@ The source plugin is being migrated from a private/personal vault repository. Pe
 
 Google Calendar integration is being redesigned for desktop and Obsidian Mobile with PKCE and long-lived refresh-token handling. Credentials must never be committed to this repository.
 
+### Bringing events into the techo
+
+`Sync Google Calendar` (command palette, or the **Google取得** button in the month view) mirrors the
+displayed month into `<Markdownフォルダ>/YYYY-MM.md`:
+
+- Each event becomes one list item under its day, e.g. `- 15:00-15:30 打ち合わせ %%gcal:<event id>%%`.
+  The `%%gcal:...%%` marker is an Obsidian comment, so it stays out of reading view.
+- A day that is missing gets a heading in the file's own style, placed inside the `## weekNN`
+  section for its ISO week.
+- Re-syncing is idempotent. Events that moved or were renamed update their existing line, and
+  events deleted in Google have their line removed. Lines without a marker are never touched.
+- A line you already wrote by hand is claimed by the matching event (same day, time and title)
+  instead of being duplicated, so an existing techo does not double up on the first sync.
+- All-day events are written without a time and span every day they cover.
+
+Only the calendar named in `Calendar ID` is synced.
+
 ## Development
 
 ```bash
