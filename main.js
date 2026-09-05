@@ -30,6 +30,7 @@ var DEFAULT_SETTINGS = {
   scope: "month",
   year: (/* @__PURE__ */ new Date()).getFullYear(),
   month: (/* @__PURE__ */ new Date()).getMonth() + 1,
+  day: (/* @__PURE__ */ new Date()).getDate(),
   googleClientId: "",
   googleClientSecret: "",
   googleCalendarId: "primary",
@@ -48,22 +49,33 @@ function monthLabel(year, month) {
   return `${year}\u5E74${month}\u6708`;
 }
 var WEEKDAY_JA = ["\u65E5", "\u6708", "\u706B", "\u6C34", "\u6728", "\u91D1", "\u571F"];
-function weekdayJa(isoDate) {
-  const [year, month, day] = isoDate.split("-").map(Number);
+function weekdayJa(isoDate2) {
+  const [year, month, day] = isoDate2.split("-").map(Number);
   return WEEKDAY_JA[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
 }
-function isoWeek(isoDate) {
-  const [year, month, day] = isoDate.split("-").map(Number);
+function isoWeek(isoDate2) {
+  const [year, month, day] = isoDate2.split("-").map(Number);
   const target = new Date(Date.UTC(year, month - 1, day));
   target.setUTCDate(target.getUTCDate() - (target.getUTCDay() + 6) % 7 + 3);
   const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
   firstThursday.setUTCDate(firstThursday.getUTCDate() - (firstThursday.getUTCDay() + 6) % 7 + 3);
   return 1 + Math.round((target.getTime() - firstThursday.getTime()) / 6048e5);
 }
-function addDays(isoDate, amount) {
-  const [year, month, day] = isoDate.split("-").map(Number);
+function addDays(isoDate2, amount) {
+  const [year, month, day] = isoDate2.split("-").map(Number);
   const shifted = new Date(Date.UTC(year, month - 1, day + amount));
   return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`;
+}
+function isoDate(year, month, day) {
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+function startOfWeek(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return addDays(date, -((weekday + 6) % 7));
+}
+function clampDay(year, month, day) {
+  return Math.min(Math.max(day, 1), daysInMonth(year, month));
 }
 
 // src/settings.ts
@@ -463,7 +475,7 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
   }
 };
 
-// src/views/month.ts
+// src/views/techo.ts
 var import_obsidian4 = require("obsidian");
 
 // src/data/markdown.ts
@@ -678,24 +690,59 @@ async function appendTechoItem(app, folder, item) {
   await app.vault.modify(file, updated.join("\n"));
   return file.path;
 }
-async function readFolder(app, folder, year, month) {
+function techoFiles(app, folder) {
   const prefix = folder.replace(/\/+$/, "");
-  const files = app.vault.getMarkdownFiles().filter((file) => !prefix || file.path.startsWith(`${prefix}/`));
-  const result = [];
-  for (const file of files) {
-    const items = parseMarkdown(await app.vault.cachedRead(file), file.path).filter((item) => {
-      const d = /* @__PURE__ */ new Date(`${item.date}T00:00:00`);
-      return d.getFullYear() === year && d.getMonth() + 1 === month;
-    });
-    if (items.length)
-      result.push({ file, items });
+  return app.vault.getMarkdownFiles().filter((file) => !prefix || file.path.startsWith(`${prefix}/`));
+}
+async function readItems(app, folder, from, to) {
+  const items = [];
+  for (const file of techoFiles(app, folder)) {
+    const text = await app.vault.cachedRead(file);
+    items.push(...parseMarkdown(text, file.path).filter((item) => item.date >= from && item.date <= to));
   }
-  return result;
+  return items.sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? ""));
+}
+function parseUndatedItems(text, filePath) {
+  const lines = text.split(/\r?\n/);
+  const byIndex = new Map(scanHeadings(lines).map((heading) => [heading.index, heading]));
+  const items = [];
+  let section = "";
+  let week;
+  lines.forEach((line, index) => {
+    const heading = byIndex.get(index);
+    if (heading) {
+      if (heading.kind === "week")
+        week = heading.week;
+      section = heading.kind === "other" ? line.replace(HEADING, "").trim() : "";
+      if (heading.kind === "month")
+        week = void 0;
+      return;
+    }
+    if (!section)
+      return;
+    const parsed = parseItemLine(line);
+    if (!parsed)
+      return;
+    items.push({ id: `${filePath}:${index + 1}`, section, week, time: parsed.time, title: parsed.title, kind: parsed.kind, checked: parsed.checked, sourceLine: index + 1 });
+  });
+  return items;
+}
+async function readUndatedItems(app, folder, year, month) {
+  const file = app.vault.getAbstractFileByPath(monthFilePath(folder, year, month));
+  if (!(file instanceof import_obsidian3.TFile))
+    return [];
+  return parseUndatedItems(await app.vault.cachedRead(file), file.path);
 }
 
-// src/views/month.ts
-var MONTH_VIEW_TYPE = "my-system-techo-month-grid";
-var MonthGridView = class extends import_obsidian4.ItemView {
+// src/views/techo.ts
+var TECHO_VIEW_TYPE = "my-system-techo-month-grid";
+var WEEKDAYS = ["\u6708", "\u706B", "\u6C34", "\u6728", "\u91D1", "\u571F", "\u65E5"];
+var SCOPES = [
+  { scope: "year", label: "\u5E74" },
+  { scope: "month", label: "\u6708" },
+  { scope: "week", label: "\u9031" }
+];
+var TechoView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -706,8 +753,15 @@ var MonthGridView = class extends import_obsidian4.ItemView {
   get month() {
     return this.plugin.settings.month;
   }
+  get scope() {
+    return this.plugin.settings.scope;
+  }
+  /** The week view anchors on this day; it is clamped because months differ in length. */
+  get day() {
+    return clampDay(this.year, this.month, this.plugin.settings.day || 1);
+  }
   getViewType() {
-    return MONTH_VIEW_TYPE;
+    return TECHO_VIEW_TYPE;
   }
   getDisplayText() {
     return "My-system-Techo";
@@ -722,50 +776,91 @@ var MonthGridView = class extends import_obsidian4.ItemView {
     const root = this.contentEl;
     root.empty();
     root.addClass("mst-grid-root");
+    if (this.scope === "year")
+      await this.renderYear(root);
+    else if (this.scope === "week")
+      await this.renderWeek(root);
+    else
+      await this.renderMonth(root);
+  }
+  // --- shared chrome -------------------------------------------------------
+  buildToolbar(root, title, shift, todayLabel) {
     const toolbar = root.createDiv({ cls: "mst-toolbar" });
-    const prev = toolbar.createEl("button", { text: "\u2039" });
-    const title = toolbar.createEl("strong", { text: monthLabel(this.year, this.month) });
-    const next = toolbar.createEl("button", { text: "\u203A" });
-    const today = toolbar.createEl("button", { text: "\u4ECA\u65E5" });
-    const googleSync = toolbar.createEl("button", { text: "Google\u53D6\u5F97" });
-    const googleAdd = toolbar.createEl("button", { text: "Google\u4E88\u5B9A\u8FFD\u52A0" });
-    prev.onclick = async () => {
-      await this.shift(-1);
+    toolbar.createEl("button", { text: "\u2039" }).onclick = async () => {
+      await shift(-1);
     };
-    next.onclick = async () => {
-      await this.shift(1);
+    toolbar.createEl("strong", { text: title });
+    toolbar.createEl("button", { text: "\u203A" }).onclick = async () => {
+      await shift(1);
     };
-    today.onclick = async () => {
-      const d = /* @__PURE__ */ new Date();
-      this.plugin.settings.year = d.getFullYear();
-      this.plugin.settings.month = d.getMonth() + 1;
-      await this.plugin.saveSettings();
-      await this.render();
+    toolbar.createEl("button", { text: todayLabel }).onclick = async () => {
+      await this.goToToday();
     };
-    googleSync.onclick = async () => {
-      googleSync.disabled = true;
-      googleSync.setText("\u53D6\u5F97\u4E2D\u2026");
+    const scopes = toolbar.createDiv({ cls: "mst-scopes" });
+    for (const { scope, label } of SCOPES) {
+      const button = scopes.createEl("button", { cls: scope === this.scope ? "mst-scope is-active" : "mst-scope", text: label });
+      button.onclick = async () => {
+        this.plugin.settings.scope = scope;
+        await this.plugin.saveSettings();
+        await this.render();
+      };
+    }
+    const sync = toolbar.createEl("button", { text: "Google\u53D6\u5F97" });
+    sync.onclick = async () => {
+      sync.disabled = true;
+      sync.setText("\u53D6\u5F97\u4E2D\u2026");
       try {
         await this.plugin.syncGoogleCalendar();
       } finally {
-        googleSync.disabled = false;
-        googleSync.setText("Google\u53D6\u5F97");
+        sync.disabled = false;
+        sync.setText("Google\u53D6\u5F97");
       }
     };
-    googleAdd.onclick = () => void this.plugin.addGoogleCalendarEvent();
-    const data = await readFolder(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
-    const byDate = /* @__PURE__ */ new Map();
-    for (const entry of data)
-      for (const item of entry.items) {
-        const list = byDate.get(item.date) ?? [];
-        list.push(item);
-        byDate.set(item.date, list);
+  }
+  renderItem(cell, item) {
+    const row = cell.createDiv({ cls: item.googleId ? "mst-item is-google" : "mst-item" });
+    row.setText(`${item.time ? `${item.time} ` : ""}${item.kind === "task" ? `${item.checked ? "\u2611" : "\u2610"} ` : ""}${item.title}`);
+  }
+  /** Renders `### 日付未定` / `### タスク` blocks, which have no day to sit under in the grid. */
+  renderUndated(root, items) {
+    if (!items.length)
+      return;
+    const sections = /* @__PURE__ */ new Map();
+    for (const item of items)
+      sections.set(item.section, [...sections.get(item.section) ?? [], item]);
+    const wrapper = root.createDiv({ cls: "mst-undated" });
+    for (const [section, entries] of sections) {
+      const box = wrapper.createDiv({ cls: "mst-undated-section" });
+      box.createDiv({ cls: "mst-undated-title", text: section });
+      for (const entry of entries) {
+        box.createDiv({ cls: "mst-item" }).setText(`${entry.time ? `${entry.time} ` : ""}${entry.kind === "task" ? `${entry.checked ? "\u2611" : "\u2610"} ` : ""}${entry.title}`);
       }
-    const grid = root.createDiv({ cls: "mst-grid" });
-    ["\u6708", "\u706B", "\u6C34", "\u6728", "\u91D1", "\u571F", "\u65E5"].forEach((label) => grid.createDiv({ cls: "mst-grid-header", text: label }));
-    const first = new Date(this.year, this.month - 1, 1);
-    const offset = (first.getDay() + 6) % 7;
+    }
+  }
+  dayActions(cell, date) {
+    const actions = cell.createDiv({ cls: "mst-day-actions" });
+    const add = actions.createEl("button", { cls: "mst-add", text: "+" });
+    add.setAttr("aria-label", `${date} \u306B\u30ED\u30FC\u30AB\u30EB\u4E88\u5B9A\u3092\u8FFD\u52A0`);
+    add.onclick = () => void this.addItem(date);
+    const google = actions.createEl("button", { cls: "mst-add-google", text: "G+" });
+    google.setAttr("aria-label", `${date} \u306BGoogle Calendar\u4E88\u5B9A\u3092\u8FFD\u52A0`);
+    google.onclick = () => void this.plugin.addGoogleCalendarEvent(date);
+  }
+  async byDate(from, to) {
+    const items = await readItems(this.app, this.plugin.settings.sourceFolder, from, to);
+    const byDate = /* @__PURE__ */ new Map();
+    for (const item of items)
+      byDate.set(item.date, [...byDate.get(item.date) ?? [], item]);
+    return byDate;
+  }
+  // --- month ---------------------------------------------------------------
+  async renderMonth(root) {
+    this.buildToolbar(root, monthLabel(this.year, this.month), (delta) => this.shiftMonth(delta), "\u4ECA\u65E5");
     const count = daysInMonth(this.year, this.month);
+    const byDate = await this.byDate(isoDate(this.year, this.month, 1), isoDate(this.year, this.month, count));
+    const grid = root.createDiv({ cls: "mst-grid" });
+    WEEKDAYS.forEach((label) => grid.createDiv({ cls: "mst-grid-header", text: label }));
+    const offset = (new Date(this.year, this.month - 1, 1).getDay() + 6) % 7;
     const total = Math.ceil((offset + count) / 7) * 7;
     for (let index = 0; index < total; index++) {
       const day = index - offset + 1;
@@ -774,22 +869,93 @@ var MonthGridView = class extends import_obsidian4.ItemView {
         cell.addClass("is-outside");
         continue;
       }
-      const date = `${this.year}-${pad2(this.month)}-${pad2(day)}`;
+      const date = isoDate(this.year, this.month, day);
       cell.createDiv({ cls: "mst-day-number", text: String(day) });
       for (const item of byDate.get(date) ?? [])
         this.renderItem(cell, item);
-      const actions = cell.createDiv({ cls: "mst-day-actions" });
-      const add = actions.createEl("button", { cls: "mst-add", text: "+" });
-      add.setAttr("aria-label", `${date} \u306B\u30ED\u30FC\u30AB\u30EB\u4E88\u5B9A\u3092\u8FFD\u52A0`);
-      add.onclick = () => void this.addItem(date);
-      const google = actions.createEl("button", { cls: "mst-add-google", text: "G+" });
-      google.setAttr("aria-label", `${date} \u306BGoogle Calendar\u4E88\u5B9A\u3092\u8FFD\u52A0`);
-      google.onclick = () => void this.plugin.addGoogleCalendarEvent(date);
+      this.dayActions(cell, date);
+    }
+    const undated = await readUndatedItems(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
+    this.renderUndated(root, undated.filter((item) => item.week === void 0));
+  }
+  // --- week ----------------------------------------------------------------
+  async renderWeek(root) {
+    const monday = startOfWeek(isoDate(this.year, this.month, this.day));
+    const sunday = addDays(monday, 6);
+    const week = isoWeek(monday);
+    this.buildToolbar(root, `week${week}\uFF08${monday} \u301C ${sunday}\uFF09`, (delta) => this.shiftWeek(delta), "\u4ECA\u9031");
+    const byDate = await this.byDate(monday, sunday);
+    const list = root.createDiv({ cls: "mst-week" });
+    for (let index = 0; index < 7; index++) {
+      const date = addDays(monday, index);
+      const [, month, day] = date.split("-").map(Number);
+      const row = list.createDiv({ cls: "mst-week-day" });
+      if (date === todayIso())
+        row.addClass("is-today");
+      const head = row.createDiv({ cls: "mst-week-head" });
+      head.createSpan({ cls: `mst-week-date is-${["mon", "tue", "wed", "thu", "fri", "sat", "sun"][index]}`, text: `${month}\u6708${day}\u65E5(${weekdayJa(date)})` });
+      const body = row.createDiv({ cls: "mst-week-body" });
+      for (const item of byDate.get(date) ?? [])
+        this.renderItem(body, item);
+      this.dayActions(head, date);
+    }
+    const undated = await readUndatedItems(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
+    this.renderUndated(root, undated.filter((item) => item.week === week));
+  }
+  // --- year ----------------------------------------------------------------
+  async renderYear(root) {
+    this.buildToolbar(root, `${this.year}\u5E74`, (delta) => this.shiftYear(delta), "\u4ECA\u5E74");
+    const byDate = await this.byDate(isoDate(this.year, 1, 1), isoDate(this.year, 12, 31));
+    const grid = root.createDiv({ cls: "mst-year" });
+    grid.createDiv({ cls: "mst-year-corner" });
+    for (let month = 1; month <= 12; month++) {
+      const header = grid.createDiv({ cls: "mst-year-header", text: `${month}\u6708` });
+      header.onclick = () => void this.openMonth(month, 1);
+    }
+    for (let day = 1; day <= 31; day++) {
+      grid.createDiv({ cls: "mst-year-day", text: String(day) });
+      for (let month = 1; month <= 12; month++) {
+        const cell = grid.createDiv({ cls: "mst-year-cell" });
+        if (day > daysInMonth(this.year, month)) {
+          cell.addClass("is-empty");
+          continue;
+        }
+        const date = isoDate(this.year, month, day);
+        const weekday = new Date(this.year, month - 1, day).getDay();
+        if (weekday === 0)
+          cell.addClass("is-sun");
+        else if (weekday === 6)
+          cell.addClass("is-sat");
+        if (date === todayIso())
+          cell.addClass("is-today");
+        cell.createSpan({ cls: "mst-year-weekday", text: weekdayJa(date) });
+        const items = byDate.get(date) ?? [];
+        if (items.length) {
+          cell.addClass("has-items");
+          cell.createSpan({ cls: "mst-year-count", text: String(items.length) });
+        }
+        cell.setAttr("aria-label", items.length ? `${date}\uFF08${items.length}\u4EF6\uFF09` : date);
+        cell.setAttr("title", items.length ? `${date}
+${items.map((item) => `${item.time ? `${item.time} ` : ""}${item.title}`).join("\n")}` : date);
+        cell.onclick = () => void this.openMonth(month, day);
+      }
     }
   }
-  renderItem(cell, item) {
-    const row = cell.createDiv({ cls: item.googleId ? "mst-item is-google" : "mst-item" });
-    row.setText(`${item.time ? `${item.time} ` : ""}${item.kind === "task" ? `${item.checked ? "\u2611" : "\u2610"} ` : ""}${item.title}`);
+  // --- navigation ----------------------------------------------------------
+  async openMonth(month, day) {
+    this.plugin.settings.month = month;
+    this.plugin.settings.day = day;
+    this.plugin.settings.scope = "month";
+    await this.plugin.saveSettings();
+    await this.render();
+  }
+  async goToToday() {
+    const now = /* @__PURE__ */ new Date();
+    this.plugin.settings.year = now.getFullYear();
+    this.plugin.settings.month = now.getMonth() + 1;
+    this.plugin.settings.day = now.getDate();
+    await this.plugin.saveSettings();
+    await this.render();
   }
   async addItem(date) {
     const title = window.prompt(`${date} \u306E\u4E88\u5B9A\u30FB\u30BF\u30B9\u30AF`);
@@ -804,14 +970,31 @@ var MonthGridView = class extends import_obsidian4.ItemView {
     }
     await this.render();
   }
-  async shift(delta) {
-    const d = new Date(this.year, this.month - 1 + delta, 1);
-    this.plugin.settings.year = d.getFullYear();
-    this.plugin.settings.month = d.getMonth() + 1;
+  async shiftMonth(delta) {
+    const shifted = new Date(this.year, this.month - 1 + delta, 1);
+    this.plugin.settings.year = shifted.getFullYear();
+    this.plugin.settings.month = shifted.getMonth() + 1;
+    await this.plugin.saveSettings();
+    await this.render();
+  }
+  async shiftWeek(delta) {
+    const [year, month, day] = addDays(isoDate(this.year, this.month, this.day), delta * 7).split("-").map(Number);
+    this.plugin.settings.year = year;
+    this.plugin.settings.month = month;
+    this.plugin.settings.day = day;
+    await this.plugin.saveSettings();
+    await this.render();
+  }
+  async shiftYear(delta) {
+    this.plugin.settings.year += delta;
     await this.plugin.saveSettings();
     await this.render();
   }
 };
+function todayIso() {
+  const now = /* @__PURE__ */ new Date();
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+}
 
 // src/data/googleSync.ts
 function renderEntryLine(entry) {
@@ -919,9 +1102,12 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       this.settings.googleWriteCalendarId = this.settings.googleCalendarIds[0];
     }
     await this.saveSettings();
-    this.registerView(MONTH_VIEW_TYPE, (leaf) => new MonthGridView(leaf, this));
+    this.registerView(TECHO_VIEW_TYPE, (leaf) => new TechoView(leaf, this));
     this.addRibbonIcon("calendar-days", "My-system-Techo", () => void this.activateView());
-    this.addCommand({ id: "open-month-grid", name: "Open month grid", callback: () => void this.activateView() });
+    this.addCommand({ id: "open-month-grid", name: "Open techo", callback: () => void this.activateView() });
+    for (const scope of ["year", "month", "week"]) {
+      this.addCommand({ id: `open-${scope}-view`, name: `Open ${scope} view`, callback: () => void this.openScope(scope) });
+    }
     this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar", callback: () => void this.syncGoogleCalendar() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
@@ -930,9 +1116,9 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
     await this.saveData(this.settings);
   }
   async activateView() {
-    const existing = this.app.workspace.getLeavesOfType(MONTH_VIEW_TYPE)[0];
+    const existing = this.app.workspace.getLeavesOfType(TECHO_VIEW_TYPE)[0];
     const leaf = existing ?? this.app.workspace.getLeaf(true);
-    await leaf.setViewState({ type: MONTH_VIEW_TYPE, active: true });
+    await leaf.setViewState({ type: TECHO_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
   async getGoogleAccessToken() {
@@ -987,10 +1173,16 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       notifyGoogleError(error);
     }
   }
+  async openScope(scope) {
+    this.settings.scope = scope;
+    await this.saveSettings();
+    await this.activateView();
+    await this.refreshMonthViews();
+  }
   async refreshMonthViews() {
-    for (const leaf of this.app.workspace.getLeavesOfType(MONTH_VIEW_TYPE)) {
+    for (const leaf of this.app.workspace.getLeavesOfType(TECHO_VIEW_TYPE)) {
       const view = leaf.view;
-      if (view instanceof MonthGridView)
+      if (view instanceof TechoView)
         await view.render();
     }
   }
