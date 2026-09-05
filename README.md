@@ -2,6 +2,20 @@
 
 An Obsidian plugin for yearly, monthly, and weekly techo views.
 
+## Views
+
+One view, three scopes, switched from the 年 / 月 / 週 buttons in the toolbar (or the
+`Open year view` / `Open month view` / `Open week view` commands):
+
+- **年** — the paper techo's year table: 31 rows down, 12 months across. Each cell shows its
+  weekday, marks the days that have entries with a count, and opens that month when clicked.
+- **月** — the Monday-first month grid, with `+` and `G+` on every day.
+- **週** — one row per day for the displayed week, headed `weekNN` with the week's date range,
+  so a busy day is not squeezed into a grid cell.
+
+`### 日付未定` and `### タスク` sections are shown below the grid: the month view shows the ones
+written at month level, the week view the ones inside that `## weekNN` section.
+
 ## Status
 
 This repository is being prepared as the public home of My-system-Techo.

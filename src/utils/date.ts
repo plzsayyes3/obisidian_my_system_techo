@@ -24,3 +24,19 @@ export function addDays(isoDate: string, amount: number): string {
   const shifted = new Date(Date.UTC(year, month - 1, day + amount));
   return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`;
 }
+
+export function isoDate(year: number, month: number, day: number): string {
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+
+/** Monday of the week containing `isoDate`, matching the Monday-first techo grid. */
+export function startOfWeek(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return addDays(date, -((weekday + 6) % 7));
+}
+
+/** Clamps a day number to a month that may be shorter, so 1/31 → 2/28 rather than 3/3. */
+export function clampDay(year: number, month: number, day: number): number {
+  return Math.min(Math.max(day, 1), daysInMonth(year, month));
+}

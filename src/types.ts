@@ -18,6 +18,8 @@ export interface MySystemTechoSettings {
   scope: TechoScope;
   year: number;
   month: number;
+  /** Day within the displayed month; the week view anchors on it. */
+  day: number;
   googleClientId: string;
   googleClientSecret: string;
   /** Legacy single-calendar setting, migrated into googleCalendarIds on load. */
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: MySystemTechoSettings = {
   scope: "month",
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
+  day: new Date().getDate(),
   googleClientId: "",
   googleClientSecret: "",
   googleCalendarId: "primary",

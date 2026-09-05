@@ -1,6 +1,9 @@
 .mst-grid-root { padding: 12px; }
 .mst-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 .mst-toolbar strong { flex: 1; text-align: center; }
+.mst-scopes { display: flex; gap: 2px; }
+.mst-scope { padding: 0 10px; opacity: 0.6; }
+.mst-scope.is-active { opacity: 1; font-weight: 700; box-shadow: inset 0 -2px 0 var(--interactive-accent); }
 .mst-grid { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); border-top: 1px solid var(--background-modifier-border); border-left: 1px solid var(--background-modifier-border); }
 .mst-grid-header, .mst-day { min-height: 110px; border-right: 1px solid var(--background-modifier-border); border-bottom: 1px solid var(--background-modifier-border); padding: 6px; }
 .mst-grid-header { min-height: auto; text-align: center; font-weight: 600; }
@@ -11,7 +14,40 @@
 .mst-day-actions { display: flex; gap: 4px; margin-top: 6px; }
 .mst-add, .mst-add-google { opacity: 0.7; padding: 0 6px; }
 .mst-add:hover, .mst-add-google:hover { opacity: 1; }
+.mst-undated { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.mst-undated-section { flex: 1 1 240px; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 8px; }
+.mst-undated-title { font-weight: 700; margin-bottom: 4px; opacity: 0.8; }
+
+/* Week: one row per day, so a day with many entries is not squeezed into a grid cell. */
+.mst-week { display: flex; flex-direction: column; border-top: 1px solid var(--background-modifier-border); }
+.mst-week-day { display: flex; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--background-modifier-border); }
+.mst-week-day.is-today { background: var(--background-modifier-hover); }
+.mst-week-head { flex: 0 0 140px; display: flex; flex-direction: column; gap: 4px; }
+.mst-week-date { font-weight: 700; }
+.mst-week-date.is-sat { color: var(--color-blue); }
+.mst-week-date.is-sun { color: var(--color-red); }
+.mst-week-body { flex: 1; min-width: 0; }
+.mst-week-body:empty::after { content: "—"; opacity: 0.3; }
+
+/* Year: the paper techo's 31 rows x 12 months table. */
+.mst-year { display: grid; grid-template-columns: 2.2em repeat(12, minmax(2.6em, 1fr)); gap: 1px; background: var(--background-modifier-border); border: 1px solid var(--background-modifier-border); overflow-x: auto; }
+.mst-year > * { background: var(--background-primary); }
+.mst-year-corner { min-height: 1.8em; }
+.mst-year-header { text-align: center; font-weight: 700; padding: 4px 0; cursor: pointer; }
+.mst-year-header:hover { background: var(--background-modifier-hover); }
+.mst-year-day { text-align: right; padding: 2px 4px; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.mst-year-cell { display: flex; align-items: center; justify-content: space-between; gap: 2px; padding: 2px 4px; cursor: pointer; font-size: 0.8em; }
+.mst-year-cell:hover { background: var(--background-modifier-hover); }
+.mst-year-cell.is-empty { background: var(--background-secondary); cursor: default; }
+.mst-year-cell.is-sat { color: var(--color-blue); }
+.mst-year-cell.is-sun { color: var(--color-red); }
+.mst-year-cell.is-today { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.mst-year-weekday { opacity: 0.55; }
+.mst-year-count { font-weight: 700; color: var(--interactive-accent); font-variant-numeric: tabular-nums; }
+
 @media (max-width: 700px) {
   .mst-grid { grid-template-columns: repeat(7, minmax(70px, 1fr)); overflow-x: auto; }
   .mst-grid-header, .mst-day { min-height: 90px; padding: 4px; font-size: 0.85em; }
+  .mst-week-head { flex-basis: 100px; }
+  .mst-year { grid-template-columns: 2em repeat(12, minmax(2.2em, 1fr)); font-size: 0.75em; }
 }

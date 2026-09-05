@@ -259,16 +259,63 @@ export async function appendTechoItem(app: App, folder: string, item: Omit<Techo
   return file.path;
 }
 
-export async function readFolder(app: App, folder: string, year: number, month: number): Promise<{ file: TFile; items: TechoItem[] }[]> {
+function techoFiles(app: App, folder: string): TFile[] {
   const prefix = folder.replace(/\/+$/, "");
-  const files = app.vault.getMarkdownFiles().filter((file) => !prefix || file.path.startsWith(`${prefix}/`));
-  const result: { file: TFile; items: TechoItem[] }[] = [];
-  for (const file of files) {
-    const items = parseMarkdown(await app.vault.cachedRead(file), file.path).filter((item) => {
-      const d = new Date(`${item.date}T00:00:00`);
-      return d.getFullYear() === year && d.getMonth() + 1 === month;
-    });
-    if (items.length) result.push({ file, items });
+  return app.vault.getMarkdownFiles().filter((file) => !prefix || file.path.startsWith(`${prefix}/`));
+}
+
+/** Every dated item between `from` and `to`, both inclusive, sorted by date then time. */
+export async function readItems(app: App, folder: string, from: string, to: string): Promise<TechoItem[]> {
+  const items: TechoItem[] = [];
+  for (const file of techoFiles(app, folder)) {
+    const text = await app.vault.cachedRead(file);
+    items.push(...parseMarkdown(text, file.path).filter((item) => item.date >= from && item.date <= to));
   }
-  return result;
+  return items.sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? ""));
+}
+
+/**
+ * Items under a heading that is not a day — `### 日付未定`, `### タスク` — which otherwise never
+ * reach the grid. `week` is the `## weekNN` section they sit in, absent for month-level sections.
+ */
+export interface UndatedItem {
+  id: string;
+  section: string;
+  week?: number;
+  time?: string;
+  title: string;
+  kind: ItemKind;
+  checked: boolean;
+  sourceLine: number;
+}
+
+export function parseUndatedItems(text: string, filePath: string): UndatedItem[] {
+  const lines = text.split(/\r?\n/);
+  const byIndex = new Map(scanHeadings(lines).map((heading) => [heading.index, heading]));
+  const items: UndatedItem[] = [];
+  let section = "";
+  let week: number | undefined;
+
+  lines.forEach((line, index) => {
+    const heading = byIndex.get(index);
+    if (heading) {
+      if (heading.kind === "week") week = heading.week;
+      // A day heading ends the undated section; a month heading starts the file over.
+      section = heading.kind === "other" ? line.replace(HEADING, "").trim() : "";
+      if (heading.kind === "month") week = undefined;
+      return;
+    }
+    if (!section) return;
+    const parsed = parseItemLine(line);
+    if (!parsed) return;
+    items.push({ id: `${filePath}:${index + 1}`, section, week, time: parsed.time, title: parsed.title, kind: parsed.kind, checked: parsed.checked, sourceLine: index + 1 });
+  });
+  return items;
+}
+
+/** Undated items for one month file, so the views can show what the day grid cannot. */
+export async function readUndatedItems(app: App, folder: string, year: number, month: number): Promise<UndatedItem[]> {
+  const file = app.vault.getAbstractFileByPath(monthFilePath(folder, year, month));
+  if (!(file instanceof TFile)) return [];
+  return parseUndatedItems(await app.vault.cachedRead(file), file.path);
 }

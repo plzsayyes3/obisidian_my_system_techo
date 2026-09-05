@@ -1,8 +1,8 @@
 import { Notice, Plugin } from "obsidian";
-import { DEFAULT_SETTINGS, MySystemTechoSettings } from "./types";
+import { DEFAULT_SETTINGS, MySystemTechoSettings, TechoScope } from "./types";
 import { pad2 } from "./utils/date";
 import { MySystemTechoSettingTab } from "./settings";
-import { MONTH_VIEW_TYPE, MonthGridView } from "./views/month";
+import { TECHO_VIEW_TYPE, TechoView } from "./views/techo";
 import { GoogleCalendarSummary, calendarSlug, createGoogleEvent, listGoogleCalendars, listGoogleEvents, notifyGoogleError, refreshGoogleToken, toTechoEntries } from "./google";
 import { GoogleTechoEntry, applyGoogleEvents } from "./data/googleSync";
 
@@ -21,9 +21,12 @@ export default class MySystemTechoPlugin extends Plugin {
       this.settings.googleWriteCalendarId = this.settings.googleCalendarIds[0];
     }
     await this.saveSettings();
-    this.registerView(MONTH_VIEW_TYPE, (leaf) => new MonthGridView(leaf, this));
+    this.registerView(TECHO_VIEW_TYPE, (leaf) => new TechoView(leaf, this));
     this.addRibbonIcon("calendar-days", "My-system-Techo", () => void this.activateView());
-    this.addCommand({ id: "open-month-grid", name: "Open month grid", callback: () => void this.activateView() });
+    this.addCommand({ id: "open-month-grid", name: "Open techo", callback: () => void this.activateView() });
+    for (const scope of ["year", "month", "week"] as const) {
+      this.addCommand({ id: `open-${scope}-view`, name: `Open ${scope} view`, callback: () => void this.openScope(scope) });
+    }
     this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar", callback: () => void this.syncGoogleCalendar() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
@@ -34,9 +37,9 @@ export default class MySystemTechoPlugin extends Plugin {
   }
 
   async activateView(): Promise<void> {
-    const existing = this.app.workspace.getLeavesOfType(MONTH_VIEW_TYPE)[0];
+    const existing = this.app.workspace.getLeavesOfType(TECHO_VIEW_TYPE)[0];
     const leaf = existing ?? this.app.workspace.getLeaf(true);
-    await leaf.setViewState({ type: MONTH_VIEW_TYPE, active: true });
+    await leaf.setViewState({ type: TECHO_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
 
@@ -94,10 +97,17 @@ export default class MySystemTechoPlugin extends Plugin {
     }
   }
 
+  async openScope(scope: TechoScope): Promise<void> {
+    this.settings.scope = scope;
+    await this.saveSettings();
+    await this.activateView();
+    await this.refreshMonthViews();
+  }
+
   async refreshMonthViews(): Promise<void> {
-    for (const leaf of this.app.workspace.getLeavesOfType(MONTH_VIEW_TYPE)) {
+    for (const leaf of this.app.workspace.getLeavesOfType(TECHO_VIEW_TYPE)) {
       const view = leaf.view;
-      if (view instanceof MonthGridView) await view.render();
+      if (view instanceof TechoView) await view.render();
     }
   }
 
