@@ -36,6 +36,7 @@ sync range.
 - Each Google event is written as ordinary readable Markdown, for example `- 15:00-15:30 打ち合わせ`.
 - Google event identities are stored separately in
   `<Markdownフォルダ>/.my-system-techo/google-YYYY-MM.json`, so UID markers do not appear in the month Markdown.
+  The sidecar is implementation metadata and is not part of the human-readable techo content.
 - Upgrading from older versions is automatic: existing inline `%%gcal:...%%` markers are read once,
   moved into the sidecar metadata, and removed from the visible Markdown during the next sync.
 - A day that is missing gets a heading in the file's own style, placed inside the `## weekNN`
