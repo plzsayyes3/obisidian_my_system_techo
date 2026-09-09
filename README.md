@@ -33,14 +33,19 @@ Google Calendar integration is being redesigned for desktop and Obsidian Mobile 
 `<Markdownフォルダ>/YYYY-MM.md`. The month currently displayed in Techo does not change this default
 sync range.
 
-- Each event becomes one list item under its day, e.g. `- 15:00-15:30 打ち合わせ %%gcal:<event id>%%`.
-  The `%%gcal:...%%` marker is an Obsidian comment, so it stays out of reading view.
+- Each Google event is written as ordinary readable Markdown, for example `- 15:00-15:30 打ち合わせ`.
+- Google event identities are stored separately in
+  `<Markdownフォルダ>/.my-system-techo/google-YYYY-MM.json`, so UID markers do not appear in the month Markdown.
+- Upgrading from older versions is automatic: existing inline `%%gcal:...%%` markers are read once,
+  moved into the sidecar metadata, and removed from the visible Markdown during the next sync.
 - A day that is missing gets a heading in the file's own style, placed inside the `## weekNN`
   section for its ISO week.
-- Re-syncing is idempotent. Events that moved or were renamed update their existing line, and
-  events deleted in Google have their line removed. Lines without a marker are never touched.
-- A line you already wrote by hand is claimed by the matching event (same day, time and title)
-  instead of being duplicated, so an existing techo does not double up on the first sync.
+- Re-syncing remains idempotent. Events that move or are renamed update their existing visible line,
+  and events deleted in Google remove the line the plugin previously wrote.
+- If a Google-owned line was manually edited after the previous sync, the plugin does not delete or
+  overwrite that altered line merely because the sidecar says it used to own it. The Google event is
+  recreated separately if needed, preserving the user's edit.
+- A matching line already written by hand is adopted instead of duplicated on first sync.
 - All-day events are written without a time and span every day they cover.
 
 ### Choosing calendars
@@ -52,13 +57,12 @@ after the settings view is reopened; the Google calendar ID is shown underneath 
 **予定の追加先** also uses the saved calendar name when available.
 
 Each calendar also has an optional **接頭記号**. The configured text is prepended exactly to every
-mirrored event title, so setting `👪` on a family calendar produces `- 19:30-20:30 👪Musashi ...`.
+mirrored event title, so setting `👪` on a family calendar produces `- 19:30-20:30 👪Musashi`.
 Leave it blank to keep the original Google event title.
 
-The marker carries the calendar as well as the event — `%%gcal:<calendar>:<event id>%%` — so an event
-shared across two calendars keeps one line per calendar. Only calendars that were actually fetched
-have their lines removed: unticking a calendar, or a calendar that fails to load, leaves the lines it
-already wrote in place.
+The sidecar key still namespaces every event by calendar, so an event shared across two calendars can
+remain independently tracked. Only calendars that were actually fetched have their sidecar records
+removed: unticking a calendar, or a calendar that fails to load, leaves what it already wrote in place.
 
 Reading the calendar list needs the `calendar.calendarlist.readonly` scope, so reconnect once after
 upgrading from a version that synced a single calendar.
