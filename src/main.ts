@@ -1,10 +1,10 @@
 import { Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, MySystemTechoSettings, TechoScope } from "./types";
-import { pad2 } from "./utils/date";
+import { addDays, pad2 } from "./utils/date";
 import { MySystemTechoSettingTab } from "./settings";
 import { TECHO_VIEW_TYPE, TechoView } from "./views/techo";
 import { GoogleCalendarSummary, calendarSlug, createGoogleEvent, listGoogleCalendars, listGoogleEvents, notifyGoogleError, refreshGoogleToken, toTechoEntries } from "./google";
-import { GoogleTechoEntry, applyGoogleEvents } from "./data/googleSync";
+import { GoogleSyncResult, GoogleSyncScope, GoogleTechoEntry, applyGoogleEvents } from "./data/googleSync";
 
 export default class MySystemTechoPlugin extends Plugin {
   settings: MySystemTechoSettings = DEFAULT_SETTINGS;
@@ -35,6 +35,8 @@ export default class MySystemTechoPlugin extends Plugin {
     }
     this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read", callback: () => void this.testGoogleCalendarRead() });
     this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar (current + next month)", callback: () => void this.syncGoogleCalendar() });
+    this.addCommand({ id: "sync-google-calendar-day", name: "Sync Google Calendar: one day", callback: () => void this.syncGoogleCalendarDay() });
+    this.addCommand({ id: "sync-google-calendar-range", name: "Sync Google Calendar: date range (fiscal year default)", callback: () => void this.syncGoogleCalendarCustomRange() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
   }
@@ -130,10 +132,46 @@ export default class MySystemTechoPlugin extends Plugin {
     }
   }
 
-  /** Mirrors one calendar month into its `<sourceFolder>/YYYY-MM.md` file. */
-  private async syncGoogleCalendarMonth(accessToken: string, year: number, month: number): Promise<{ summary: string; failedCalendars: string[] }> {
-    const start = new Date(year, month - 1, 1).toISOString();
-    const end = new Date(year, month, 1).toISOString();
+  private isoLocal(date: Date): string {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  }
+
+  private parseSyncDate(value: string, label: string): string {
+    const trimmed = value.trim();
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (!match) throw new Error(`${label}は YYYY-MM-DD 形式で入力してください。`);
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(year, month - 1, day);
+    if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+      throw new Error(`${label}の日付が正しくありません。`);
+    }
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+  }
+
+  private fiscalYearRange(reference = new Date()): GoogleSyncScope {
+    const startYear = reference.getMonth() + 1 >= 4 ? reference.getFullYear() : reference.getFullYear() - 1;
+    return { from: `${startYear}-04-01`, to: `${startYear + 1}-03-31` };
+  }
+
+  /** Mirrors one calendar month (or a clipped range within it) into its month file. */
+  private async syncGoogleCalendarMonth(
+    accessToken: string,
+    year: number,
+    month: number,
+    requestedScope?: GoogleSyncScope,
+  ): Promise<{ summary: string; failedCalendars: string[]; sync: GoogleSyncResult }> {
+    const monthFrom = `${year}-${pad2(month)}-01`;
+    const monthTo = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;
+    const scope: GoogleSyncScope = {
+      from: requestedScope && requestedScope.from > monthFrom ? requestedScope.from : monthFrom,
+      to: requestedScope && requestedScope.to < monthTo ? requestedScope.to : monthTo,
+    };
+    if (scope.from > scope.to) throw new Error(`${year}-${pad2(month)} は指定期間に含まれていません。`);
+
+    const start = new Date(`${scope.from}T00:00:00`).toISOString();
+    const end = new Date(`${addDays(scope.to, 1)}T00:00:00`).toISOString();
 
     const entries: GoogleTechoEntry[] = [];
     const syncedSlugs: string[] = [];
@@ -142,7 +180,8 @@ export default class MySystemTechoPlugin extends Plugin {
       try {
         const events = await listGoogleEvents(accessToken, calendarId, start, end);
         const calendarPrefix = this.settings.googleCalendarPrefixes[calendarId]?.trim() ?? "";
-        const calendarEntries = toTechoEntries(events, year, month, calendarId);
+        const calendarEntries = toTechoEntries(events, year, month, calendarId)
+          .filter((entry) => entry.date >= scope.from && entry.date <= scope.to);
         entries.push(...calendarEntries.map((entry) => calendarPrefix ? { ...entry, title: `${calendarPrefix}${entry.title}` } : entry));
         syncedSlugs.push(calendarSlug(calendarId));
       } catch (error) {
@@ -153,39 +192,84 @@ export default class MySystemTechoPlugin extends Plugin {
     }
     if (!syncedSlugs.length) throw new Error(`${year}-${pad2(month)} はどのカレンダーからも取得できませんでした。`);
 
-    const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs);
+    const sync = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs, scope);
     return {
-      summary: `${year}-${pad2(month)}: 追加${result.added} / 更新${result.updated} / 既存に紐付け${result.adopted} / 削除${result.removed}`,
+      summary: `${scope.from}〜${scope.to}: 追加${sync.added} / 更新${sync.updated} / 既存に紐付け${sync.adopted} / 削除${sync.removed}`,
       failedCalendars,
+      sync,
     };
   }
 
-  /**
-   * Default Google sync is independent of the month currently shown in Techo.
-   * It always mirrors the current calendar month and the following calendar month.
-   */
-  async syncGoogleCalendar(): Promise<void> {
+  private async runGoogleCalendarRange(scope: GoogleSyncScope, label: string): Promise<void> {
     try {
+      if (scope.from > scope.to) throw new Error("終了日は開始日以降にしてください。");
       const accessToken = await this.getGoogleAccessToken();
-      const now = new Date();
-      const targets = [
-        new Date(now.getFullYear(), now.getMonth(), 1),
-        new Date(now.getFullYear(), now.getMonth() + 1, 1),
-      ];
-      const summaries: string[] = [];
+      const [fromYear, fromMonth] = scope.from.split("-").map(Number);
+      const [toYear, toMonth] = scope.to.split("-").map(Number);
+      let cursor = new Date(fromYear, fromMonth - 1, 1);
+      const lastMonth = new Date(toYear, toMonth - 1, 1);
+      let monthCount = 0;
       let failedCalendarCount = 0;
+      const totals = { added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
 
-      for (const target of targets) {
-        const year = target.getFullYear();
-        const month = target.getMonth() + 1;
-        const result = await this.syncGoogleCalendarMonth(accessToken, year, month);
-        summaries.push(result.summary);
+      while (cursor <= lastMonth) {
+        const result = await this.syncGoogleCalendarMonth(accessToken, cursor.getFullYear(), cursor.getMonth() + 1, scope);
+        monthCount++;
         failedCalendarCount += result.failedCalendars.length;
+        totals.added += result.sync.added;
+        totals.updated += result.sync.updated;
+        totals.adopted += result.sync.adopted;
+        totals.removed += result.sync.removed;
+        totals.migrated += result.sync.migrated;
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
 
-      const failureSummary = failedCalendarCount ? `（カレンダー取得失敗 延べ${failedCalendarCount}件）` : "";
-      new Notice(`Google取得（今月＋翌月）: ${summaries.join(" / ")}${failureSummary}`, 12000);
+      const failureSummary = failedCalendarCount ? ` / カレンダー取得失敗 延べ${failedCalendarCount}件` : "";
+      const migratedSummary = totals.migrated ? ` / UID移行${totals.migrated}` : "";
+      new Notice(
+        `Google取得（${label}）: ${scope.from}〜${scope.to} / ${monthCount}か月 / 追加${totals.added} / 更新${totals.updated} / 既存に紐付け${totals.adopted} / 削除${totals.removed}${migratedSummary}${failureSummary}`,
+        12000,
+      );
       await this.refreshMonthViews();
+    } catch (error) {
+      notifyGoogleError(error);
+    }
+  }
+
+  /** Default sync: current calendar month plus the following calendar month. */
+  async syncGoogleCalendar(): Promise<void> {
+    const now = new Date();
+    const from = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+    const to = this.isoLocal(nextMonth);
+    await this.runGoogleCalendarRange({ from, to }, "今月＋翌月");
+  }
+
+  /** Prompts for one date, defaulting to today, and refreshes only that day. */
+  async syncGoogleCalendarDay(): Promise<void> {
+    try {
+      const today = this.isoLocal(new Date());
+      const input = window.prompt("Google Calendarから取得する日付（YYYY-MM-DD）", today);
+      if (input === null) return;
+      const date = this.parseSyncDate(input, "日付");
+      await this.runGoogleCalendarRange({ from: date, to: date }, "1日");
+    } catch (error) {
+      notifyGoogleError(error);
+    }
+  }
+
+  /** Prompts for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
+  async syncGoogleCalendarCustomRange(): Promise<void> {
+    try {
+      const defaults = this.fiscalYearRange();
+      const fromInput = window.prompt("Google Calendar取得の開始日（YYYY-MM-DD）", defaults.from);
+      if (fromInput === null) return;
+      const toInput = window.prompt("Google Calendar取得の終了日（YYYY-MM-DD）", defaults.to);
+      if (toInput === null) return;
+      const from = this.parseSyncDate(fromInput, "開始日");
+      const to = this.parseSyncDate(toInput, "終了日");
+      if (from > to) throw new Error("終了日は開始日以降にしてください。");
+      await this.runGoogleCalendarRange({ from, to }, "指定期間");
     } catch (error) {
       notifyGoogleError(error);
     }
@@ -240,9 +324,9 @@ export default class MySystemTechoPlugin extends Plugin {
       const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
       new Notice(`Google Calendarに「${title.trim()}」を追加しました。`);
 
-      // Creation follows the selected day, which may be outside the default current + next month window.
+      // A newly created event only needs the day it was written to refreshed.
       const [targetYear, targetMonth] = targetDate.split("-").map(Number);
-      await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth);
+      await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
       await this.refreshMonthViews();
       if (result.htmlLink) console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
     } catch (error) {
