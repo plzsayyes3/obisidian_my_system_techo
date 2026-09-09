@@ -46,8 +46,10 @@ sync range.
 ### Choosing calendars
 
 Settings lists the calendars you are subscribed to (press **カレンダー一覧を取得**) and syncs the ones
-you tick; an ID can also be typed in by hand if the list cannot be fetched. **予定の追加先** picks the
-calendar that `Add Google Calendar event` writes to.
+you tick; an ID can also be typed in by hand if the list cannot be fetched. The last known calendar
+name is saved with the plugin settings, so selected calendars continue to display their readable name
+after the settings view is reopened; the Google calendar ID is shown underneath for identification.
+**予定の追加先** also uses the saved calendar name when available.
 
 Each calendar also has an optional **接頭記号**. The configured text is prepended exactly to every
 mirrored event title, so setting `👪` on a family calendar produces `- 19:30-20:30 👪Musashi ...`.
