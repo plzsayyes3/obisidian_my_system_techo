@@ -1,123 +1,254 @@
-import { App } from "obsidian";
-import { detectDateHeadingStyle, insertItemLine, lineDates, monthFilePath, openMonthFile, parseItemLine } from "./markdown";
+import { App, TFile } from "obsidian";
+import {
+  GOOGLE_MARKER,
+  detectDateHeadingStyle,
+  ensureFolder,
+  insertItemLine,
+  joinPath,
+  lineDates,
+  monthFilePath,
+  openMonthFile,
+  parseItemLine,
+} from "./markdown";
 
 /** One line's worth of Google Calendar data, already resolved to a single techo day. */
 export interface GoogleTechoEntry {
-  /** Stable identity written into the line marker. Multi-day events get one key per day. */
+  /** Stable Google identity. Kept in sidecar metadata, never rendered into the Markdown line. */
   key: string;
   date: string;
   time?: string;
   title: string;
 }
 
+interface StoredGoogleEntry {
+  date: string;
+  time?: string;
+  title: string;
+}
+
+interface GoogleSyncMetadata {
+  version: 1;
+  entries: Record<string, StoredGoogleEntry>;
+}
+
 export interface GoogleSyncResult {
   path: string;
   added: number;
   updated: number;
-  /** Lines that already held the same event and were claimed by adding a marker. */
+  /** Existing visible lines that matched a Google event and were adopted into sidecar metadata. */
   adopted: number;
   removed: number;
+  /** Legacy inline %%gcal:...%% markers moved into sidecar metadata. */
+  migrated: number;
 }
 
+/** Google-owned lines are now ordinary readable Markdown. Identity lives in the sidecar file. */
 export function renderEntryLine(entry: GoogleTechoEntry): string {
-  return `- ${entry.time ? `${entry.time} ` : ""}${entry.title} %%gcal:${entry.key}%%`;
+  return `- ${entry.time ? `${entry.time} ` : ""}${entry.title}`;
+}
+
+function metadataFolder(folder: string): string {
+  return joinPath(folder, ".my-system-techo");
+}
+
+function metadataPath(folder: string, year: number, month: number): string {
+  return joinPath(metadataFolder(folder), `google-${year}-${String(month).padStart(2, "0")}.json`);
+}
+
+function validStoredEntry(value: unknown): value is StoredGoogleEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<StoredGoogleEntry>;
+  return typeof entry.date === "string" && typeof entry.title === "string" && (entry.time === undefined || typeof entry.time === "string");
+}
+
+async function readMetadata(app: App, folder: string, year: number, month: number): Promise<GoogleSyncMetadata> {
+  const file = app.vault.getAbstractFileByPath(metadataPath(folder, year, month));
+  if (!(file instanceof TFile)) return { version: 1, entries: {} };
+
+  try {
+    const parsed = JSON.parse(await app.vault.read(file)) as { entries?: Record<string, unknown> };
+    const entries: Record<string, StoredGoogleEntry> = {};
+    if (parsed?.entries && typeof parsed.entries === "object") {
+      for (const [key, value] of Object.entries(parsed.entries)) {
+        if (validStoredEntry(value)) entries[key] = value;
+      }
+    }
+    return { version: 1, entries };
+  } catch {
+    // A damaged sidecar must never block the user's month file. A fresh sync can safely rebuild it
+    // from exact visible-line matches for events that still exist in Google.
+    return { version: 1, entries: {} };
+  }
+}
+
+async function writeMetadata(app: App, folder: string, year: number, month: number, metadata: GoogleSyncMetadata): Promise<void> {
+  const directory = metadataFolder(folder);
+  await ensureFolder(app, directory);
+  const path = metadataPath(folder, year, month);
+  const text = `${JSON.stringify(metadata, null, 2)}\n`;
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (existing instanceof TFile) await app.vault.modify(existing, text);
+  else await app.vault.create(path, text);
+}
+
+function keySlug(key: string): string {
+  const separator = key.indexOf(":");
+  return separator >= 0 ? key.slice(0, separator) : key;
 }
 
 /**
- * Mirrors `entries` into `<folder>/<YYYY-MM>.md`, keeping the file's existing week/date structure.
- * `syncedSlugs` names the calendars that were actually fetched: only their lines may be removed,
- * so a calendar the user deselected — or one whose fetch failed — keeps what it already wrote.
+ * Finds a visible line that still exactly matches what the plugin wrote on the previous sync.
+ * Exact matching is intentional: if the user edits a Google line by hand, we leave that edited
+ * line alone rather than deleting or overwriting something that may now be intentional content.
  */
-export async function applyGoogleEvents(app: App, folder: string, year: number, month: number, entries: GoogleTechoEntry[], syncedSlugs: string[]): Promise<GoogleSyncResult> {
+function findStoredLine(lines: string[], stored: StoredGoogleEntry, claimed: Set<number>): number | null {
+  const dates = lineDates(lines);
+  for (let index = 0; index < lines.length; index++) {
+    if (claimed.has(index) || dates[index] !== stored.date) continue;
+    const parsed = parseItemLine(lines[index]);
+    if (!parsed) continue;
+    if ((parsed.time ?? "") === (stored.time ?? "") && parsed.title === stored.title) return index;
+  }
+  return null;
+}
+
+function findEntryLine(lines: string[], entry: GoogleTechoEntry, claimed: Set<number>): number | null {
+  return findStoredLine(lines, { date: entry.date, time: entry.time, title: entry.title }, claimed);
+}
+
+/**
+ * Reads markers from pre-sidecar versions, records their identities, and removes the markers from
+ * the visible Markdown in place. Line count is unchanged, so every index remains stable.
+ */
+function migrateLegacyMarkers(lines: string[], legacySlug: string, entries: Record<string, StoredGoogleEntry>): number {
+  const dates = lineDates(lines);
+  let migrated = 0;
+
+  lines.forEach((line, index) => {
+    const parsed = parseItemLine(line);
+    const raw = parsed?.googleId;
+    if (!parsed || !raw || !dates[index]) return;
+
+    // Before multi-calendar support markers carried only an event id. Treat those as belonging to
+    // the first currently synced calendar, matching the old migration behaviour.
+    const key = raw.includes(":") ? raw : `${legacySlug}:${raw}`;
+    if (!entries[key]) entries[key] = { date: dates[index], time: parsed.time, title: parsed.title };
+
+    const clean = line.replace(GOOGLE_MARKER, "").replace(/\s+$/, "");
+    if (clean !== line) {
+      lines[index] = clean;
+      migrated++;
+    }
+  });
+
+  return migrated;
+}
+
+/**
+ * Mirrors `entries` into `<folder>/<YYYY-MM>.md`, while keeping Google identities in
+ * `<folder>/.my-system-techo/google-YYYY-MM.json`.
+ *
+ * `syncedSlugs` names the calendars that were actually fetched: only their owned records may be
+ * removed, so deselected or temporarily unreachable calendars keep the lines they already wrote.
+ */
+export async function applyGoogleEvents(
+  app: App,
+  folder: string,
+  year: number,
+  month: number,
+  entries: GoogleTechoEntry[],
+  syncedSlugs: string[],
+): Promise<GoogleSyncResult> {
   const path = monthFilePath(folder, year, month);
   const file = await openMonthFile(app, folder, year, month);
 
   const original = await app.vault.read(file);
   let lines = original.split(/\r?\n/);
   const style = detectDateHeadingStyle(lines);
-  const result: GoogleSyncResult = { path, added: 0, updated: 0, adopted: 0, removed: 0 };
+  const result: GoogleSyncResult = { path, added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
 
-  const marked = collectMarkedLines(lines, syncedSlugs[0]);
+  const metadata = await readMetadata(app, folder, year, month);
+  const previous: Record<string, StoredGoogleEntry> = { ...metadata.entries };
+  result.migrated = migrateLegacyMarkers(lines, syncedSlugs[0] ?? "primary", previous);
+
   const wanted = new Map(entries.map((entry) => [entry.key, entry]));
-
-  // Replacements and removals are index-stable until applied, so decide everything first.
   const replacements = new Map<number, string>();
   const removals = new Set<number>();
   const insertions: GoogleTechoEntry[] = [];
   const claimed = new Set<number>();
 
   for (const entry of entries) {
-    const existing = marked.get(entry.key);
+    const stored = previous[entry.key];
     const desired = renderEntryLine(entry);
-    if (existing) {
-      if (existing.date === entry.date && lines[existing.index] === desired) continue;
-      if (existing.date === entry.date) {
-        replacements.set(existing.index, desired);
-        result.updated++;
+
+    if (stored) {
+      const existingIndex = findStoredLine(lines, stored, claimed);
+      if (existingIndex !== null) {
+        claimed.add(existingIndex);
+        if (stored.date === entry.date) {
+          if (lines[existingIndex] !== desired) {
+            replacements.set(existingIndex, desired);
+            result.updated++;
+          }
+        } else {
+          removals.add(existingIndex);
+          insertions.push(entry);
+          result.updated++;
+        }
+        continue;
+      }
+
+      // Metadata survived but the old visible line did not. If the desired line is already present,
+      // simply re-attach ownership to it; otherwise recreate the Google line without touching any
+      // manually altered former line.
+      const recoveredIndex = findEntryLine(lines, entry, claimed);
+      if (recoveredIndex !== null) {
+        claimed.add(recoveredIndex);
+        result.adopted++;
       } else {
-        removals.add(existing.index);
         insertions.push(entry);
         result.updated++;
       }
       continue;
     }
 
-    const adoptable = findAdoptableLine(lines, entry, claimed);
+    // First sidecar sync (or a newly created Google event): adopt an exact line already present in
+    // the techo rather than duplicating it.
+    const adoptable = findEntryLine(lines, entry, claimed);
     if (adoptable !== null) {
       claimed.add(adoptable);
-      replacements.set(adoptable, `${lines[adoptable].replace(/\s+$/, "")} %%gcal:${entry.key}%%`);
       result.adopted++;
-      continue;
+    } else {
+      insertions.push(entry);
+      result.added++;
     }
-
-    insertions.push(entry);
-    result.added++;
   }
 
-  for (const [key, existing] of marked) {
+  // Remove events that disappeared from Google only when we can still find the exact line the
+  // plugin previously wrote. If the user edited it, ownership is dropped but the edited line stays.
+  for (const [key, stored] of Object.entries(previous)) {
     if (wanted.has(key) || !syncedSlugs.includes(keySlug(key))) continue;
-    removals.add(existing.index);
-    result.removed++;
+    const existingIndex = findStoredLine(lines, stored, claimed);
+    if (existingIndex !== null) {
+      removals.add(existingIndex);
+      result.removed++;
+    }
   }
 
   for (const [index, text] of replacements) lines[index] = text;
   if (removals.size) lines = lines.filter((_, index) => !removals.has(index));
   for (const entry of insertions) lines = insertItemLine(lines, entry.date, renderEntryLine(entry), style);
 
+  const nextEntries: Record<string, StoredGoogleEntry> = { ...previous };
+  for (const key of Object.keys(nextEntries)) {
+    if (!wanted.has(key) && syncedSlugs.includes(keySlug(key))) delete nextEntries[key];
+  }
+  for (const entry of entries) {
+    nextEntries[entry.key] = { date: entry.date, time: entry.time, title: entry.title };
+  }
+
   const updated = lines.join("\n");
   if (updated !== original) await app.vault.modify(file, updated);
+  await writeMetadata(app, folder, year, month, { version: 1, entries: nextEntries });
   return result;
-}
-
-function keySlug(key: string): string {
-  return key.slice(0, key.indexOf(":"));
-}
-
-function collectMarkedLines(lines: string[], legacySlug: string): Map<string, { index: number; date: string }> {
-  const dates = lineDates(lines);
-  const marked = new Map<string, { index: number; date: string }>();
-  lines.forEach((line, index) => {
-    const raw = parseItemLine(line)?.googleId;
-    if (!raw) return;
-    // Markers written before multi-calendar support carry a bare event id; read them as
-    // belonging to the first synced calendar so they are re-keyed rather than duplicated.
-    const key = raw.includes(":") ? raw : `${legacySlug}:${raw}`;
-    if (!marked.has(key)) marked.set(key, { index, date: dates[index] });
-  });
-  return marked;
-}
-
-/**
- * Finds an unmarked line that already spells out this event, so a techo filled in by hand
- * is claimed on the first sync instead of being duplicated.
- */
-function findAdoptableLine(lines: string[], entry: GoogleTechoEntry, claimed: Set<number>): number | null {
-  const dates = lineDates(lines);
-  for (let index = 0; index < lines.length; index++) {
-    if (dates[index] !== entry.date || claimed.has(index)) continue;
-    const parsed = parseItemLine(lines[index]);
-    if (!parsed || parsed.googleId) continue;
-    if ((parsed.time ?? "") === (entry.time ?? "") && parsed.title === entry.title) return index;
-  }
-  return null;
 }
