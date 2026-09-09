@@ -1108,6 +1108,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
     for (const scope of ["year", "month", "week"]) {
       this.addCommand({ id: `open-${scope}-view`, name: `Open ${scope} view`, callback: () => void this.openScope(scope) });
     }
+    this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read", callback: () => void this.testGoogleCalendarRead() });
     this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar", callback: () => void this.syncGoogleCalendar() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
@@ -1142,6 +1143,52 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
   }
   async listGoogleCalendars() {
     return listGoogleCalendars(await this.getGoogleAccessToken());
+  }
+  /**
+   * Read-only diagnostic. It never changes Markdown or Google Calendar.
+   * It separates calendar-list permission problems from event-read problems so OAuth failures are easier to identify.
+   */
+  async testGoogleCalendarRead() {
+    try {
+      const accessToken = await this.getGoogleAccessToken();
+      const { year, month } = this.settings;
+      const start = new Date(year, month - 1, 1).toISOString();
+      const end = new Date(year, month, 1).toISOString();
+      let calendarListCount = null;
+      let calendarListError = null;
+      try {
+        const calendars = await listGoogleCalendars(accessToken);
+        calendarListCount = calendars.length;
+        console.log("[My-system-Techo][Google read test] calendar list", calendars);
+      } catch (error) {
+        calendarListError = error instanceof Error ? error.message : String(error);
+        console.warn("[My-system-Techo][Google read test] calendar list failed", calendarListError);
+      }
+      const results = [];
+      const failures = [];
+      for (const calendarId of this.syncCalendarIds()) {
+        try {
+          const events = await listGoogleEvents(accessToken, calendarId, start, end);
+          results.push({ calendarId, count: events.length });
+          console.log("[My-system-Techo][Google read test] events", { calendarId, count: events.length, sample: events.slice(0, 5) });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          failures.push({ calendarId, message });
+          console.warn("[My-system-Techo][Google read test] events failed", { calendarId, message });
+        }
+      }
+      if (!results.length) {
+        const detail = failures.map((item) => `${item.calendarId}: ${item.message}`).join(" / ");
+        throw new Error(`Google Calendar\u306E\u4E88\u5B9A\u3092\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002${detail ? ` ${detail}` : ""}`);
+      }
+      const total = results.reduce((sum, item) => sum + item.count, 0);
+      const eventSummary = results.map((item) => `${item.calendarId}=${item.count}\u4EF6`).join(" / ");
+      const listSummary = calendarListCount === null ? `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u306F\u5931\u6557\uFF08${calendarListError ?? "\u539F\u56E0\u4E0D\u660E"}\uFF09` : `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7${calendarListCount}\u4EF6`;
+      const failureSummary = failures.length ? ` / \u53D6\u5F97\u5931\u6557${failures.length}\u4EF6` : "";
+      new import_obsidian5.Notice(`Google\u53D6\u5F97\u30C6\u30B9\u30C8\u6210\u529F: ${listSummary} / ${year}-${pad2(month)} \u4E88\u5B9A\u5408\u8A08${total}\u4EF6 / ${eventSummary}${failureSummary}`, 12e3);
+    } catch (error) {
+      notifyGoogleError(error);
+    }
   }
   /** Mirrors the displayed month of every selected calendar into `<sourceFolder>/YYYY-MM.md`. */
   async syncGoogleCalendar() {
