@@ -111,11 +111,20 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
     this.display();
   }
 
+  private async setCalendarPrefix(calendarId: string, value: string): Promise<void> {
+    const prefixes = { ...this.plugin.settings.googleCalendarPrefixes };
+    const prefix = value.trim();
+    if (prefix) prefixes[calendarId] = prefix;
+    else delete prefixes[calendarId];
+    this.plugin.settings.googleCalendarPrefixes = prefixes;
+    await this.plugin.saveSettings();
+  }
+
   private renderCalendarPicker(containerEl: HTMLElement, isConnected: boolean): void {
     const selected = this.plugin.syncCalendarIds();
 
     containerEl.createEl("h3", { text: "同期するカレンダー" });
-    containerEl.createEl("p", { text: "選んだカレンダーの予定が手帳のMarkdownに書き込まれます。チェックを外したカレンダーは同期されなくなりますが、すでに書き込まれた行はそのまま残ります。" });
+    containerEl.createEl("p", { text: "選んだカレンダーの予定が手帳のMarkdownに書き込まれます。各カレンダーの接頭記号には 👪 や 💼 など任意の文字を設定できます。入力した文字は予定タイトルの直前にそのまま付きます。" });
 
     new Setting(containerEl)
       .setName("カレンダー一覧を取得")
@@ -140,6 +149,12 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
         new Setting(containerEl)
           .setName(calendar.primary ? `${calendar.summary}（メイン）` : calendar.summary)
           .setDesc(calendar.id)
+          .addText((text) => {
+            text.setPlaceholder("接頭記号 👪")
+              .setValue(this.plugin.settings.googleCalendarPrefixes[calendar.id] ?? "")
+              .onChange(async (value) => { await this.setCalendarPrefix(calendar.id, value); });
+            text.inputEl.setAttribute("aria-label", `${calendar.summary} の接頭記号`);
+          })
           .addToggle((toggle) => toggle
             .setValue(selected.includes(calendar.id))
             .onChange(async (value) => {
@@ -154,6 +169,12 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName(id)
         .setDesc("同期対象")
+        .addText((text) => {
+          text.setPlaceholder("接頭記号 👪")
+            .setValue(this.plugin.settings.googleCalendarPrefixes[id] ?? "")
+            .onChange(async (value) => { await this.setCalendarPrefix(id, value); });
+          text.inputEl.setAttribute("aria-label", `${id} の接頭記号`);
+        })
         .addExtraButton((button) => button
           .setIcon("trash")
           .setTooltip("同期対象から外す")
