@@ -81,6 +81,23 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
       .setName("接続状態")
       .setDesc(isConnected ? "接続済み" : "未接続");
 
+    new Setting(containerEl)
+      .setName("Google取得テスト")
+      .setDesc("Markdownには書き込まず、現在表示中の月についてGoogleからカレンダー一覧と予定を取得できるか確認します。")
+      .addButton((button) => button
+        .setButtonText("取得テスト")
+        .setDisabled(!isConnected)
+        .onClick(async () => {
+          button.setDisabled(true);
+          button.setButtonText("取得中…");
+          try {
+            await this.plugin.testGoogleCalendarRead();
+          } finally {
+            button.setDisabled(false);
+            button.setButtonText("取得テスト");
+          }
+        }));
+
     this.renderCalendarPicker(containerEl, isConnected);
   }
 
