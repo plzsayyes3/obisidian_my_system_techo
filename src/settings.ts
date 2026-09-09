@@ -120,15 +120,21 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
     await this.plugin.saveSettings();
   }
 
+  private calendarName(calendarId: string): string {
+    return this.calendars.find((calendar) => calendar.id === calendarId)?.summary
+      || this.plugin.settings.googleCalendarNames[calendarId]
+      || calendarId;
+  }
+
   private renderCalendarPicker(containerEl: HTMLElement, isConnected: boolean): void {
     const selected = this.plugin.syncCalendarIds();
 
     containerEl.createEl("h3", { text: "同期するカレンダー" });
-    containerEl.createEl("p", { text: "選んだカレンダーの予定が手帳のMarkdownに書き込まれます。各カレンダーの接頭記号には 👪 や 💼 など任意の文字を設定できます。入力した文字は予定タイトルの直前にそのまま付きます。" });
+    containerEl.createEl("p", { text: "選んだカレンダーの予定が手帳のMarkdownに書き込まれます。カレンダー名を表示し、IDはその下に表示します。各カレンダーの接頭記号には 👪 や 💼 など任意の文字を設定できます。" });
 
     new Setting(containerEl)
       .setName("カレンダー一覧を取得")
-      .setDesc(isConnected ? "Googleから購読中のカレンダーを読み込みます。" : "先にGoogle Calendarへ接続してください。")
+      .setDesc(isConnected ? "Googleから購読中のカレンダーを読み込みます。取得したカレンダー名は次回以降も保存されます。" : "先にGoogle Calendarへ接続してください。")
       .addButton((button) => button
         .setButtonText("取得")
         .setDisabled(!isConnected)
@@ -148,7 +154,7 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
       for (const calendar of this.calendars) {
         new Setting(containerEl)
           .setName(calendar.primary ? `${calendar.summary}（メイン）` : calendar.summary)
-          .setDesc(calendar.id)
+          .setDesc(`ID: ${calendar.id}`)
           .addText((text) => {
             text.setPlaceholder("接頭記号 👪")
               .setValue(this.plugin.settings.googleCalendarPrefixes[calendar.id] ?? "")
@@ -166,14 +172,15 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
 
     // Calendars the picker has not loaded — or that were typed in by hand — still need to be visible.
     for (const id of selected.filter((id) => !this.calendars.some((calendar) => calendar.id === id))) {
+      const name = this.calendarName(id);
       new Setting(containerEl)
-        .setName(id)
-        .setDesc("同期対象")
+        .setName(name)
+        .setDesc(name === id ? `同期対象 / ID: ${id}` : `ID: ${id}`)
         .addText((text) => {
           text.setPlaceholder("接頭記号 👪")
             .setValue(this.plugin.settings.googleCalendarPrefixes[id] ?? "")
             .onChange(async (value) => { await this.setCalendarPrefix(id, value); });
-          text.inputEl.setAttribute("aria-label", `${id} の接頭記号`);
+          text.inputEl.setAttribute("aria-label", `${name} の接頭記号`);
         })
         .addExtraButton((button) => button
           .setIcon("trash")
@@ -197,9 +204,7 @@ export class MySystemTechoSettingTab extends PluginSettingTab {
       .setName("予定の追加先")
       .setDesc("「Google予定追加」で書き込むカレンダー。")
       .addDropdown((dropdown) => {
-        for (const id of selected) {
-          dropdown.addOption(id, this.calendars.find((calendar) => calendar.id === id)?.summary || id);
-        }
+        for (const id of selected) dropdown.addOption(id, this.calendarName(id));
         dropdown.setValue(this.plugin.settings.googleWriteCalendarId || selected[0]);
         dropdown.onChange(async (value) => {
           this.plugin.settings.googleWriteCalendarId = value;
