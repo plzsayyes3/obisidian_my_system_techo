@@ -29,7 +29,9 @@ Google Calendar integration is being redesigned for desktop and Obsidian Mobile 
 ### Bringing events into the techo
 
 `Sync Google Calendar` (command palette, or the **Google取得** button in the month view) mirrors the
-displayed month into `<Markdownフォルダ>/YYYY-MM.md`:
+**current calendar month and the following calendar month**, based on today's date, into
+`<Markdownフォルダ>/YYYY-MM.md`. The month currently displayed in Techo does not change this default
+sync range.
 
 - Each event becomes one list item under its day, e.g. `- 15:00-15:30 打ち合わせ %%gcal:<event id>%%`.
   The `%%gcal:...%%` marker is an Obsidian comment, so it stays out of reading view.
