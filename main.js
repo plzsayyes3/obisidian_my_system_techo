@@ -1119,7 +1119,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       this.addCommand({ id: `open-${scope}-view`, name: `Open ${scope} view`, callback: () => void this.openScope(scope) });
     }
     this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read", callback: () => void this.testGoogleCalendarRead() });
-    this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar", callback: () => void this.syncGoogleCalendar() });
+    this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar (current + next month)", callback: () => void this.syncGoogleCalendar() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
   }
@@ -1200,31 +1200,54 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       notifyGoogleError(error);
     }
   }
-  /** Mirrors the displayed month of every selected calendar into `<sourceFolder>/YYYY-MM.md`. */
+  /** Mirrors one calendar month into its `<sourceFolder>/YYYY-MM.md` file. */
+  async syncGoogleCalendarMonth(accessToken, year, month) {
+    const start = new Date(year, month - 1, 1).toISOString();
+    const end = new Date(year, month, 1).toISOString();
+    const entries = [];
+    const syncedSlugs = [];
+    const failedCalendars = [];
+    for (const calendarId of this.syncCalendarIds()) {
+      try {
+        const events = await listGoogleEvents(accessToken, calendarId, start, end);
+        entries.push(...toTechoEntries(events, year, month, calendarId));
+        syncedSlugs.push(calendarSlug(calendarId));
+      } catch (error) {
+        failedCalendars.push(calendarId);
+        notifyGoogleError(error);
+      }
+    }
+    if (!syncedSlugs.length)
+      throw new Error(`${year}-${pad2(month)} \u306F\u3069\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u304B\u3089\u3082\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002`);
+    const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs);
+    return {
+      summary: `${year}-${pad2(month)}: \u8FFD\u52A0${result.added} / \u66F4\u65B0${result.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${result.adopted} / \u524A\u9664${result.removed}`,
+      failedCalendars
+    };
+  }
+  /**
+   * Default Google sync is independent of the month currently shown in Techo.
+   * It always mirrors the current calendar month and the following calendar month.
+   */
   async syncGoogleCalendar() {
     try {
-      const { year, month } = this.settings;
       const accessToken = await this.getGoogleAccessToken();
-      const start = new Date(year, month - 1, 1).toISOString();
-      const end = new Date(year, month, 1).toISOString();
-      const entries = [];
-      const syncedSlugs = [];
-      const failed = [];
-      for (const calendarId of this.syncCalendarIds()) {
-        try {
-          const events = await listGoogleEvents(accessToken, calendarId, start, end);
-          entries.push(...toTechoEntries(events, year, month, calendarId));
-          syncedSlugs.push(calendarSlug(calendarId));
-        } catch (error) {
-          failed.push(calendarId);
-          notifyGoogleError(error);
-        }
+      const now = /* @__PURE__ */ new Date();
+      const targets = [
+        new Date(now.getFullYear(), now.getMonth(), 1),
+        new Date(now.getFullYear(), now.getMonth() + 1, 1)
+      ];
+      const summaries = [];
+      let failedCalendarCount = 0;
+      for (const target of targets) {
+        const year = target.getFullYear();
+        const month = target.getMonth() + 1;
+        const result = await this.syncGoogleCalendarMonth(accessToken, year, month);
+        summaries.push(result.summary);
+        failedCalendarCount += result.failedCalendars.length;
       }
-      if (!syncedSlugs.length)
-        throw new Error("\u3069\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u304B\u3089\u3082\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002");
-      const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs);
-      const summary = `${result.path}: \u8FFD\u52A0${result.added} / \u66F4\u65B0${result.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${result.adopted} / \u524A\u9664${result.removed}`;
-      new import_obsidian5.Notice(failed.length ? `${summary}\uFF08${failed.length}\u4EF6\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u306F\u53D6\u5F97\u5931\u6557\uFF09` : summary);
+      const failureSummary = failedCalendarCount ? `\uFF08\u30AB\u30EC\u30F3\u30C0\u30FC\u53D6\u5F97\u5931\u6557 \u5EF6\u3079${failedCalendarCount}\u4EF6\uFF09` : "";
+      new import_obsidian5.Notice(`Google\u53D6\u5F97\uFF08\u4ECA\u6708\uFF0B\u7FCC\u6708\uFF09: ${summaries.join(" / ")}${failureSummary}`, 12e3);
       await this.refreshMonthViews();
     } catch (error) {
       notifyGoogleError(error);
@@ -1281,7 +1304,9 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       const accessToken = await this.getGoogleAccessToken();
       const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
       new import_obsidian5.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
-      await this.syncGoogleCalendar();
+      const [targetYear, targetMonth] = targetDate.split("-").map(Number);
+      await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth);
+      await this.refreshMonthViews();
       if (result.htmlLink)
         console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
     } catch (error) {
