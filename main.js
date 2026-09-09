@@ -415,6 +415,16 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
       }
     }));
     new import_obsidian2.Setting(containerEl).setName("\u63A5\u7D9A\u72B6\u614B").setDesc(isConnected ? "\u63A5\u7D9A\u6E08\u307F" : "\u672A\u63A5\u7D9A");
+    new import_obsidian2.Setting(containerEl).setName("Google\u53D6\u5F97\u30C6\u30B9\u30C8").setDesc("Markdown\u306B\u306F\u66F8\u304D\u8FBC\u307E\u305A\u3001\u73FE\u5728\u8868\u793A\u4E2D\u306E\u6708\u306B\u3064\u3044\u3066Google\u304B\u3089\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u3068\u4E88\u5B9A\u3092\u53D6\u5F97\u3067\u304D\u308B\u304B\u78BA\u8A8D\u3057\u307E\u3059\u3002").addButton((button) => button.setButtonText("\u53D6\u5F97\u30C6\u30B9\u30C8").setDisabled(!isConnected).onClick(async () => {
+      button.setDisabled(true);
+      button.setButtonText("\u53D6\u5F97\u4E2D\u2026");
+      try {
+        await this.plugin.testGoogleCalendarRead();
+      } finally {
+        button.setDisabled(false);
+        button.setButtonText("\u53D6\u5F97\u30C6\u30B9\u30C8");
+      }
+    }));
     this.renderCalendarPicker(containerEl, isConnected);
   }
   async setCalendarIds(ids) {
