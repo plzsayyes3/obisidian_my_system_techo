@@ -35,6 +35,7 @@ var DEFAULT_SETTINGS = {
   googleClientSecret: "",
   googleCalendarId: "primary",
   googleCalendarIds: ["primary"],
+  googleCalendarPrefixes: {},
   googleWriteCalendarId: "primary"
 };
 
@@ -436,10 +437,20 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
     await this.plugin.saveSettings();
     this.display();
   }
+  async setCalendarPrefix(calendarId, value) {
+    const prefixes = { ...this.plugin.settings.googleCalendarPrefixes };
+    const prefix = value.trim();
+    if (prefix)
+      prefixes[calendarId] = prefix;
+    else
+      delete prefixes[calendarId];
+    this.plugin.settings.googleCalendarPrefixes = prefixes;
+    await this.plugin.saveSettings();
+  }
   renderCalendarPicker(containerEl, isConnected) {
     const selected = this.plugin.syncCalendarIds();
     containerEl.createEl("h3", { text: "\u540C\u671F\u3059\u308B\u30AB\u30EC\u30F3\u30C0\u30FC" });
-    containerEl.createEl("p", { text: "\u9078\u3093\u3060\u30AB\u30EC\u30F3\u30C0\u30FC\u306E\u4E88\u5B9A\u304C\u624B\u5E33\u306EMarkdown\u306B\u66F8\u304D\u8FBC\u307E\u308C\u307E\u3059\u3002\u30C1\u30A7\u30C3\u30AF\u3092\u5916\u3057\u305F\u30AB\u30EC\u30F3\u30C0\u30FC\u306F\u540C\u671F\u3055\u308C\u306A\u304F\u306A\u308A\u307E\u3059\u304C\u3001\u3059\u3067\u306B\u66F8\u304D\u8FBC\u307E\u308C\u305F\u884C\u306F\u305D\u306E\u307E\u307E\u6B8B\u308A\u307E\u3059\u3002" });
+    containerEl.createEl("p", { text: "\u9078\u3093\u3060\u30AB\u30EC\u30F3\u30C0\u30FC\u306E\u4E88\u5B9A\u304C\u624B\u5E33\u306EMarkdown\u306B\u66F8\u304D\u8FBC\u307E\u308C\u307E\u3059\u3002\u5404\u30AB\u30EC\u30F3\u30C0\u30FC\u306E\u63A5\u982D\u8A18\u53F7\u306B\u306F \u{1F46A} \u3084 \u{1F4BC} \u306A\u3069\u4EFB\u610F\u306E\u6587\u5B57\u3092\u8A2D\u5B9A\u3067\u304D\u307E\u3059\u3002\u5165\u529B\u3057\u305F\u6587\u5B57\u306F\u4E88\u5B9A\u30BF\u30A4\u30C8\u30EB\u306E\u76F4\u524D\u306B\u305D\u306E\u307E\u307E\u4ED8\u304D\u307E\u3059\u3002" });
     new import_obsidian2.Setting(containerEl).setName("\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u3092\u53D6\u5F97").setDesc(isConnected ? "Google\u304B\u3089\u8CFC\u8AAD\u4E2D\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u3092\u8AAD\u307F\u8FBC\u307F\u307E\u3059\u3002" : "\u5148\u306BGoogle Calendar\u3078\u63A5\u7D9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002").addButton((button) => button.setButtonText("\u53D6\u5F97").setDisabled(!isConnected).onClick(async () => {
       button.setDisabled(true);
       try {
@@ -453,14 +464,24 @@ var MySystemTechoSettingTab = class extends import_obsidian2.PluginSettingTab {
     }));
     if (this.calendars.length) {
       for (const calendar of this.calendars) {
-        new import_obsidian2.Setting(containerEl).setName(calendar.primary ? `${calendar.summary}\uFF08\u30E1\u30A4\u30F3\uFF09` : calendar.summary).setDesc(calendar.id).addToggle((toggle) => toggle.setValue(selected.includes(calendar.id)).onChange(async (value) => {
+        new import_obsidian2.Setting(containerEl).setName(calendar.primary ? `${calendar.summary}\uFF08\u30E1\u30A4\u30F3\uFF09` : calendar.summary).setDesc(calendar.id).addText((text) => {
+          text.setPlaceholder("\u63A5\u982D\u8A18\u53F7 \u{1F46A}").setValue(this.plugin.settings.googleCalendarPrefixes[calendar.id] ?? "").onChange(async (value) => {
+            await this.setCalendarPrefix(calendar.id, value);
+          });
+          text.inputEl.setAttribute("aria-label", `${calendar.summary} \u306E\u63A5\u982D\u8A18\u53F7`);
+        }).addToggle((toggle) => toggle.setValue(selected.includes(calendar.id)).onChange(async (value) => {
           const next = value ? [...selected, calendar.id] : selected.filter((id) => id !== calendar.id);
           await this.setCalendarIds(next);
         }));
       }
     }
     for (const id of selected.filter((id2) => !this.calendars.some((calendar) => calendar.id === id2))) {
-      new import_obsidian2.Setting(containerEl).setName(id).setDesc("\u540C\u671F\u5BFE\u8C61").addExtraButton((button) => button.setIcon("trash").setTooltip("\u540C\u671F\u5BFE\u8C61\u304B\u3089\u5916\u3059").onClick(async () => {
+      new import_obsidian2.Setting(containerEl).setName(id).setDesc("\u540C\u671F\u5BFE\u8C61").addText((text) => {
+        text.setPlaceholder("\u63A5\u982D\u8A18\u53F7 \u{1F46A}").setValue(this.plugin.settings.googleCalendarPrefixes[id] ?? "").onChange(async (value) => {
+          await this.setCalendarPrefix(id, value);
+        });
+        text.inputEl.setAttribute("aria-label", `${id} \u306E\u63A5\u982D\u8A18\u53F7`);
+      }).addExtraButton((button) => button.setIcon("trash").setTooltip("\u540C\u671F\u5BFE\u8C61\u304B\u3089\u5916\u3059").onClick(async () => {
         await this.setCalendarIds(selected.filter((value) => value !== id));
       }));
     }
@@ -1108,6 +1129,9 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
     if (!Array.isArray(saved?.googleCalendarIds) || !saved.googleCalendarIds.length) {
       this.settings.googleCalendarIds = [saved?.googleCalendarId || DEFAULT_SETTINGS.googleCalendarIds[0]];
     }
+    if (!saved?.googleCalendarPrefixes || typeof saved.googleCalendarPrefixes !== "object" || Array.isArray(saved.googleCalendarPrefixes)) {
+      this.settings.googleCalendarPrefixes = {};
+    }
     if (!this.settings.googleCalendarIds.includes(this.settings.googleWriteCalendarId)) {
       this.settings.googleWriteCalendarId = this.settings.googleCalendarIds[0];
     }
@@ -1210,7 +1234,9 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
     for (const calendarId of this.syncCalendarIds()) {
       try {
         const events = await listGoogleEvents(accessToken, calendarId, start, end);
-        entries.push(...toTechoEntries(events, year, month, calendarId));
+        const calendarPrefix = this.settings.googleCalendarPrefixes[calendarId]?.trim() ?? "";
+        const calendarEntries = toTechoEntries(events, year, month, calendarId);
+        entries.push(...calendarEntries.map((entry) => calendarPrefix ? { ...entry, title: `${calendarPrefix}${entry.title}` } : entry));
         syncedSlugs.push(calendarSlug(calendarId));
       } catch (error) {
         failedCalendars.push(calendarId);
