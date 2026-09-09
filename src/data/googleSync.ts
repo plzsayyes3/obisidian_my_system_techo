@@ -31,6 +31,13 @@ interface GoogleSyncMetadata {
   entries: Record<string, StoredGoogleEntry>;
 }
 
+export interface GoogleSyncScope {
+  /** Inclusive ISO date. */
+  from: string;
+  /** Inclusive ISO date. */
+  to: string;
+}
+
 export interface GoogleSyncResult {
   path: string;
   added: number;
@@ -96,6 +103,10 @@ function keySlug(key: string): string {
   return separator >= 0 ? key.slice(0, separator) : key;
 }
 
+function dateInScope(date: string, scope?: GoogleSyncScope): boolean {
+  return !scope || (date >= scope.from && date <= scope.to);
+}
+
 /**
  * Finds a visible line that still exactly matches what the plugin wrote on the previous sync.
  * Exact matching is intentional: if the user edits a Google line by hand, we leave that edited
@@ -150,6 +161,8 @@ function migrateLegacyMarkers(lines: string[], legacySlug: string, entries: Reco
  *
  * `syncedSlugs` names the calendars that were actually fetched: only their owned records may be
  * removed, so deselected or temporarily unreachable calendars keep the lines they already wrote.
+ * When `scope` is supplied, deletion/ownership cleanup is limited to dates inside that range. This
+ * lets one-day or partial-month refreshes coexist safely with the rest of the month's sidecar data.
  */
 export async function applyGoogleEvents(
   app: App,
@@ -158,6 +171,7 @@ export async function applyGoogleEvents(
   month: number,
   entries: GoogleTechoEntry[],
   syncedSlugs: string[],
+  scope?: GoogleSyncScope,
 ): Promise<GoogleSyncResult> {
   const path = monthFilePath(folder, year, month);
   const file = await openMonthFile(app, folder, year, month);
@@ -171,13 +185,14 @@ export async function applyGoogleEvents(
   const previous: Record<string, StoredGoogleEntry> = { ...metadata.entries };
   result.migrated = migrateLegacyMarkers(lines, syncedSlugs[0] ?? "primary", previous);
 
-  const wanted = new Map(entries.map((entry) => [entry.key, entry]));
+  const scopedEntries = entries.filter((entry) => dateInScope(entry.date, scope));
+  const wanted = new Map(scopedEntries.map((entry) => [entry.key, entry]));
   const replacements = new Map<number, string>();
   const removals = new Set<number>();
   const insertions: GoogleTechoEntry[] = [];
   const claimed = new Set<number>();
 
-  for (const entry of entries) {
+  for (const entry of scopedEntries) {
     const stored = previous[entry.key];
     const desired = renderEntryLine(entry);
 
@@ -225,9 +240,10 @@ export async function applyGoogleEvents(
   }
 
   // Remove events that disappeared from Google only when we can still find the exact line the
-  // plugin previously wrote. If the user edited it, ownership is dropped but the edited line stays.
+  // plugin previously wrote. Partial syncs only consider stored events whose previous date falls
+  // inside the requested range; all other dates in the month remain untouched.
   for (const [key, stored] of Object.entries(previous)) {
-    if (wanted.has(key) || !syncedSlugs.includes(keySlug(key))) continue;
+    if (wanted.has(key) || !syncedSlugs.includes(keySlug(key)) || !dateInScope(stored.date, scope)) continue;
     const existingIndex = findStoredLine(lines, stored, claimed);
     if (existingIndex !== null) {
       removals.add(existingIndex);
@@ -240,10 +256,10 @@ export async function applyGoogleEvents(
   for (const entry of insertions) lines = insertItemLine(lines, entry.date, renderEntryLine(entry), style);
 
   const nextEntries: Record<string, StoredGoogleEntry> = { ...previous };
-  for (const key of Object.keys(nextEntries)) {
-    if (!wanted.has(key) && syncedSlugs.includes(keySlug(key))) delete nextEntries[key];
+  for (const [key, stored] of Object.entries(nextEntries)) {
+    if (!wanted.has(key) && syncedSlugs.includes(keySlug(key)) && dateInScope(stored.date, scope)) delete nextEntries[key];
   }
-  for (const entry of entries) {
+  for (const entry of scopedEntries) {
     nextEntries[entry.key] = { date: entry.date, time: entry.time, title: entry.title };
   }
 
