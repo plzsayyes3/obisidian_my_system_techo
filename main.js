@@ -22,7 +22,7 @@ __export(main_exports, {
   default: () => MySystemTechoPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_SETTINGS = {
@@ -1032,8 +1032,90 @@ function todayIso() {
 }
 
 // src/data/googleSync.ts
+var import_obsidian5 = require("obsidian");
 function renderEntryLine(entry) {
-  return `- ${entry.time ? `${entry.time} ` : ""}${entry.title} %%gcal:${entry.key}%%`;
+  return `- ${entry.time ? `${entry.time} ` : ""}${entry.title}`;
+}
+function metadataFolder(folder) {
+  return joinPath(folder, ".my-system-techo");
+}
+function metadataPath(folder, year, month) {
+  return joinPath(metadataFolder(folder), `google-${year}-${String(month).padStart(2, "0")}.json`);
+}
+function validStoredEntry(value) {
+  if (!value || typeof value !== "object")
+    return false;
+  const entry = value;
+  return typeof entry.date === "string" && typeof entry.title === "string" && (entry.time === void 0 || typeof entry.time === "string");
+}
+async function readMetadata(app, folder, year, month) {
+  const file = app.vault.getAbstractFileByPath(metadataPath(folder, year, month));
+  if (!(file instanceof import_obsidian5.TFile))
+    return { version: 1, entries: {} };
+  try {
+    const parsed = JSON.parse(await app.vault.read(file));
+    const entries = {};
+    if (parsed?.entries && typeof parsed.entries === "object") {
+      for (const [key, value] of Object.entries(parsed.entries)) {
+        if (validStoredEntry(value))
+          entries[key] = value;
+      }
+    }
+    return { version: 1, entries };
+  } catch {
+    return { version: 1, entries: {} };
+  }
+}
+async function writeMetadata(app, folder, year, month, metadata) {
+  const directory = metadataFolder(folder);
+  await ensureFolder(app, directory);
+  const path = metadataPath(folder, year, month);
+  const text = `${JSON.stringify(metadata, null, 2)}
+`;
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian5.TFile)
+    await app.vault.modify(existing, text);
+  else
+    await app.vault.create(path, text);
+}
+function keySlug(key) {
+  const separator = key.indexOf(":");
+  return separator >= 0 ? key.slice(0, separator) : key;
+}
+function findStoredLine(lines, stored, claimed) {
+  const dates = lineDates(lines);
+  for (let index = 0; index < lines.length; index++) {
+    if (claimed.has(index) || dates[index] !== stored.date)
+      continue;
+    const parsed = parseItemLine(lines[index]);
+    if (!parsed)
+      continue;
+    if ((parsed.time ?? "") === (stored.time ?? "") && parsed.title === stored.title)
+      return index;
+  }
+  return null;
+}
+function findEntryLine(lines, entry, claimed) {
+  return findStoredLine(lines, { date: entry.date, time: entry.time, title: entry.title }, claimed);
+}
+function migrateLegacyMarkers(lines, legacySlug, entries) {
+  const dates = lineDates(lines);
+  let migrated = 0;
+  lines.forEach((line, index) => {
+    const parsed = parseItemLine(line);
+    const raw = parsed?.googleId;
+    if (!parsed || !raw || !dates[index])
+      return;
+    const key = raw.includes(":") ? raw : `${legacySlug}:${raw}`;
+    if (!entries[key])
+      entries[key] = { date: dates[index], time: parsed.time, title: parsed.title };
+    const clean = line.replace(GOOGLE_MARKER, "").replace(/\s+$/, "");
+    if (clean !== line) {
+      lines[index] = clean;
+      migrated++;
+    }
+  });
+  return migrated;
 }
 async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs) {
   const path = monthFilePath(folder, year, month);
@@ -1041,44 +1123,61 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs)
   const original = await app.vault.read(file);
   let lines = original.split(/\r?\n/);
   const style = detectDateHeadingStyle(lines);
-  const result = { path, added: 0, updated: 0, adopted: 0, removed: 0 };
-  const marked = collectMarkedLines(lines, syncedSlugs[0]);
+  const result = { path, added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
+  const metadata = await readMetadata(app, folder, year, month);
+  const previous = { ...metadata.entries };
+  result.migrated = migrateLegacyMarkers(lines, syncedSlugs[0] ?? "primary", previous);
   const wanted = new Map(entries.map((entry) => [entry.key, entry]));
   const replacements = /* @__PURE__ */ new Map();
   const removals = /* @__PURE__ */ new Set();
   const insertions = [];
   const claimed = /* @__PURE__ */ new Set();
   for (const entry of entries) {
-    const existing = marked.get(entry.key);
+    const stored = previous[entry.key];
     const desired = renderEntryLine(entry);
-    if (existing) {
-      if (existing.date === entry.date && lines[existing.index] === desired)
+    if (stored) {
+      const existingIndex = findStoredLine(lines, stored, claimed);
+      if (existingIndex !== null) {
+        claimed.add(existingIndex);
+        if (stored.date === entry.date) {
+          if (lines[existingIndex] !== desired) {
+            replacements.set(existingIndex, desired);
+            result.updated++;
+          }
+        } else {
+          removals.add(existingIndex);
+          insertions.push(entry);
+          result.updated++;
+        }
         continue;
-      if (existing.date === entry.date) {
-        replacements.set(existing.index, desired);
-        result.updated++;
+      }
+      const recoveredIndex = findEntryLine(lines, entry, claimed);
+      if (recoveredIndex !== null) {
+        claimed.add(recoveredIndex);
+        result.adopted++;
       } else {
-        removals.add(existing.index);
         insertions.push(entry);
         result.updated++;
       }
       continue;
     }
-    const adoptable = findAdoptableLine(lines, entry, claimed);
+    const adoptable = findEntryLine(lines, entry, claimed);
     if (adoptable !== null) {
       claimed.add(adoptable);
-      replacements.set(adoptable, `${lines[adoptable].replace(/\s+$/, "")} %%gcal:${entry.key}%%`);
       result.adopted++;
-      continue;
+    } else {
+      insertions.push(entry);
+      result.added++;
     }
-    insertions.push(entry);
-    result.added++;
   }
-  for (const [key, existing] of marked) {
+  for (const [key, stored] of Object.entries(previous)) {
     if (wanted.has(key) || !syncedSlugs.includes(keySlug(key)))
       continue;
-    removals.add(existing.index);
-    result.removed++;
+    const existingIndex = findStoredLine(lines, stored, claimed);
+    if (existingIndex !== null) {
+      removals.add(existingIndex);
+      result.removed++;
+    }
   }
   for (const [index, text] of replacements)
     lines[index] = text;
@@ -1086,43 +1185,23 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs)
     lines = lines.filter((_, index) => !removals.has(index));
   for (const entry of insertions)
     lines = insertItemLine(lines, entry.date, renderEntryLine(entry), style);
+  const nextEntries = { ...previous };
+  for (const key of Object.keys(nextEntries)) {
+    if (!wanted.has(key) && syncedSlugs.includes(keySlug(key)))
+      delete nextEntries[key];
+  }
+  for (const entry of entries) {
+    nextEntries[entry.key] = { date: entry.date, time: entry.time, title: entry.title };
+  }
   const updated = lines.join("\n");
   if (updated !== original)
     await app.vault.modify(file, updated);
+  await writeMetadata(app, folder, year, month, { version: 1, entries: nextEntries });
   return result;
-}
-function keySlug(key) {
-  return key.slice(0, key.indexOf(":"));
-}
-function collectMarkedLines(lines, legacySlug) {
-  const dates = lineDates(lines);
-  const marked = /* @__PURE__ */ new Map();
-  lines.forEach((line, index) => {
-    const raw = parseItemLine(line)?.googleId;
-    if (!raw)
-      return;
-    const key = raw.includes(":") ? raw : `${legacySlug}:${raw}`;
-    if (!marked.has(key))
-      marked.set(key, { index, date: dates[index] });
-  });
-  return marked;
-}
-function findAdoptableLine(lines, entry, claimed) {
-  const dates = lineDates(lines);
-  for (let index = 0; index < lines.length; index++) {
-    if (dates[index] !== entry.date || claimed.has(index))
-      continue;
-    const parsed = parseItemLine(lines[index]);
-    if (!parsed || parsed.googleId)
-      continue;
-    if ((parsed.time ?? "") === (entry.time ?? "") && parsed.title === entry.title)
-      return index;
-  }
-  return null;
 }
 
 // src/main.ts
-var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
+var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -1232,7 +1311,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       const eventSummary = results.map((item) => `${item.calendarId}=${item.count}\u4EF6`).join(" / ");
       const listSummary = calendarListCount === null ? `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u306F\u5931\u6557\uFF08${calendarListError ?? "\u539F\u56E0\u4E0D\u660E"}\uFF09` : `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7${calendarListCount}\u4EF6`;
       const failureSummary = failures.length ? ` / \u53D6\u5F97\u5931\u6557${failures.length}\u4EF6` : "";
-      new import_obsidian5.Notice(`Google\u53D6\u5F97\u30C6\u30B9\u30C8\u6210\u529F: ${listSummary} / ${year}-${pad2(month)} \u4E88\u5B9A\u5408\u8A08${total}\u4EF6 / ${eventSummary}${failureSummary}`, 12e3);
+      new import_obsidian6.Notice(`Google\u53D6\u5F97\u30C6\u30B9\u30C8\u6210\u529F: ${listSummary} / ${year}-${pad2(month)} \u4E88\u5B9A\u5408\u8A08${total}\u4EF6 / ${eventSummary}${failureSummary}`, 12e3);
     } catch (error) {
       notifyGoogleError(error);
     }
@@ -1286,7 +1365,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
         failedCalendarCount += result.failedCalendars.length;
       }
       const failureSummary = failedCalendarCount ? `\uFF08\u30AB\u30EC\u30F3\u30C0\u30FC\u53D6\u5F97\u5931\u6557 \u5EF6\u3079${failedCalendarCount}\u4EF6\uFF09` : "";
-      new import_obsidian5.Notice(`Google\u53D6\u5F97\uFF08\u4ECA\u6708\uFF0B\u7FCC\u6708\uFF09: ${summaries.join(" / ")}${failureSummary}`, 12e3);
+      new import_obsidian6.Notice(`Google\u53D6\u5F97\uFF08\u4ECA\u6708\uFF0B\u7FCC\u6708\uFF09: ${summaries.join(" / ")}${failureSummary}`, 12e3);
       await this.refreshMonthViews();
     } catch (error) {
       notifyGoogleError(error);
@@ -1342,7 +1421,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       }
       const accessToken = await this.getGoogleAccessToken();
       const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
-      new import_obsidian5.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
+      new import_obsidian6.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
       const [targetYear, targetMonth] = targetDate.split("-").map(Number);
       await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth);
       await this.refreshMonthViews();
