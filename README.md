@@ -41,7 +41,7 @@ Two additional commands provide narrower or broader refresh ranges:
   `2026-04-01` through `2027-03-31`; in February 2027 they are the same fiscal-year boundaries.
 
 Partial-day/month syncs only delete or replace Google-owned records inside the requested date range.
-Other dates in the same month remain untouched.
+Other dates in the same month remain untouched, including their sidecar ownership records.
 
 - Each Google event is written as ordinary readable Markdown, for example `- 15:00-15:30 打ち合わせ`.
 - Google event identities are stored separately in
