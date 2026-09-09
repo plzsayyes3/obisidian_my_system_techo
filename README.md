@@ -28,10 +28,20 @@ Google Calendar integration is being redesigned for desktop and Obsidian Mobile 
 
 ### Bringing events into the techo
 
-`Sync Google Calendar` (command palette, or the **Google取得** button in the month view) mirrors the
+The default `Sync Google Calendar` command (and the **Google取得** button in the view) mirrors the
 **current calendar month and the following calendar month**, based on today's date, into
 `<Markdownフォルダ>/YYYY-MM.md`. The month currently displayed in Techo does not change this default
 sync range.
+
+Two additional commands provide narrower or broader refresh ranges:
+
+- `Sync Google Calendar: one day` prompts for one `YYYY-MM-DD`, defaulting to today, and updates only that day.
+- `Sync Google Calendar: date range (fiscal year default)` prompts for start/end dates. Its defaults are the
+  current Japanese fiscal year, **April 1 through March 31**. For example, in September 2026 the defaults are
+  `2026-04-01` through `2027-03-31`; in February 2027 they are the same fiscal-year boundaries.
+
+Partial-day/month syncs only delete or replace Google-owned records inside the requested date range.
+Other dates in the same month remain untouched.
 
 - Each Google event is written as ordinary readable Markdown, for example `- 15:00-15:30 打ち合わせ`.
 - Google event identities are stored separately in
