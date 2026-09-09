@@ -27,6 +27,7 @@ export default class MySystemTechoPlugin extends Plugin {
     for (const scope of ["year", "month", "week"] as const) {
       this.addCommand({ id: `open-${scope}-view`, name: `Open ${scope} view`, callback: () => void this.openScope(scope) });
     }
+    this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read", callback: () => void this.testGoogleCalendarRead() });
     this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar", callback: () => void this.syncGoogleCalendar() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
@@ -62,6 +63,59 @@ export default class MySystemTechoPlugin extends Plugin {
 
   async listGoogleCalendars(): Promise<GoogleCalendarSummary[]> {
     return listGoogleCalendars(await this.getGoogleAccessToken());
+  }
+
+  /**
+   * Read-only diagnostic. It never changes Markdown or Google Calendar.
+   * It separates calendar-list permission problems from event-read problems so OAuth failures are easier to identify.
+   */
+  async testGoogleCalendarRead(): Promise<void> {
+    try {
+      const accessToken = await this.getGoogleAccessToken();
+      const { year, month } = this.settings;
+      const start = new Date(year, month - 1, 1).toISOString();
+      const end = new Date(year, month, 1).toISOString();
+
+      let calendarListCount: number | null = null;
+      let calendarListError: string | null = null;
+      try {
+        const calendars = await listGoogleCalendars(accessToken);
+        calendarListCount = calendars.length;
+        console.log("[My-system-Techo][Google read test] calendar list", calendars);
+      } catch (error) {
+        calendarListError = error instanceof Error ? error.message : String(error);
+        console.warn("[My-system-Techo][Google read test] calendar list failed", calendarListError);
+      }
+
+      const results: Array<{ calendarId: string; count: number }> = [];
+      const failures: Array<{ calendarId: string; message: string }> = [];
+      for (const calendarId of this.syncCalendarIds()) {
+        try {
+          const events = await listGoogleEvents(accessToken, calendarId, start, end);
+          results.push({ calendarId, count: events.length });
+          console.log("[My-system-Techo][Google read test] events", { calendarId, count: events.length, sample: events.slice(0, 5) });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          failures.push({ calendarId, message });
+          console.warn("[My-system-Techo][Google read test] events failed", { calendarId, message });
+        }
+      }
+
+      if (!results.length) {
+        const detail = failures.map((item) => `${item.calendarId}: ${item.message}`).join(" / ");
+        throw new Error(`Google Calendarの予定を取得できませんでした。${detail ? ` ${detail}` : ""}`);
+      }
+
+      const total = results.reduce((sum, item) => sum + item.count, 0);
+      const eventSummary = results.map((item) => `${item.calendarId}=${item.count}件`).join(" / ");
+      const listSummary = calendarListCount === null
+        ? `カレンダー一覧は失敗（${calendarListError ?? "原因不明"}）`
+        : `カレンダー一覧${calendarListCount}件`;
+      const failureSummary = failures.length ? ` / 取得失敗${failures.length}件` : "";
+      new Notice(`Google取得テスト成功: ${listSummary} / ${year}-${pad2(month)} 予定合計${total}件 / ${eventSummary}${failureSummary}`, 12000);
+    } catch (error) {
+      notifyGoogleError(error);
+    }
   }
 
   /** Mirrors the displayed month of every selected calendar into `<sourceFolder>/YYYY-MM.md`. */
