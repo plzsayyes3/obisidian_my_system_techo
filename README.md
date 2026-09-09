@@ -49,6 +49,10 @@ Settings lists the calendars you are subscribed to (press **カレンダー一�
 you tick; an ID can also be typed in by hand if the list cannot be fetched. **予定の追加先** picks the
 calendar that `Add Google Calendar event` writes to.
 
+Each calendar also has an optional **接頭記号**. The configured text is prepended exactly to every
+mirrored event title, so setting `👪` on a family calendar produces `- 19:30-20:30 👪Musashi ...`.
+Leave it blank to keep the original Google event title.
+
 The marker carries the calendar as well as the event — `%%gcal:<calendar>:<event id>%%` — so an event
 shared across two calendars keeps one line per calendar. Only calendars that were actually fetched
 have their lines removed: unticking a calendar, or a calendar that fails to load, leaves the lines it
