@@ -16,6 +16,9 @@ export default class MySystemTechoPlugin extends Plugin {
       // Upgrade from the single-calendar setting.
       this.settings.googleCalendarIds = [saved?.googleCalendarId || DEFAULT_SETTINGS.googleCalendarIds[0]];
     }
+    if (!saved?.googleCalendarNames || typeof saved.googleCalendarNames !== "object" || Array.isArray(saved.googleCalendarNames)) {
+      this.settings.googleCalendarNames = {};
+    }
     if (!saved?.googleCalendarPrefixes || typeof saved.googleCalendarPrefixes !== "object" || Array.isArray(saved.googleCalendarPrefixes)) {
       this.settings.googleCalendarPrefixes = {};
     }
@@ -65,7 +68,13 @@ export default class MySystemTechoPlugin extends Plugin {
   }
 
   async listGoogleCalendars(): Promise<GoogleCalendarSummary[]> {
-    return listGoogleCalendars(await this.getGoogleAccessToken());
+    const calendars = await listGoogleCalendars(await this.getGoogleAccessToken());
+    this.settings.googleCalendarNames = {
+      ...this.settings.googleCalendarNames,
+      ...Object.fromEntries(calendars.map((calendar) => [calendar.id, calendar.summary])),
+    };
+    await this.saveSettings();
+    return calendars;
   }
 
   /**
