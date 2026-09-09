@@ -16,6 +16,9 @@ export default class MySystemTechoPlugin extends Plugin {
       // Upgrade from the single-calendar setting.
       this.settings.googleCalendarIds = [saved?.googleCalendarId || DEFAULT_SETTINGS.googleCalendarIds[0]];
     }
+    if (!saved?.googleCalendarPrefixes || typeof saved.googleCalendarPrefixes !== "object" || Array.isArray(saved.googleCalendarPrefixes)) {
+      this.settings.googleCalendarPrefixes = {};
+    }
     if (!this.settings.googleCalendarIds.includes(this.settings.googleWriteCalendarId)) {
       // Includes the migration case, where the write target still holds the "primary" default.
       this.settings.googleWriteCalendarId = this.settings.googleCalendarIds[0];
@@ -129,7 +132,9 @@ export default class MySystemTechoPlugin extends Plugin {
     for (const calendarId of this.syncCalendarIds()) {
       try {
         const events = await listGoogleEvents(accessToken, calendarId, start, end);
-        entries.push(...toTechoEntries(events, year, month, calendarId));
+        const calendarPrefix = this.settings.googleCalendarPrefixes[calendarId]?.trim() ?? "";
+        const calendarEntries = toTechoEntries(events, year, month, calendarId);
+        entries.push(...calendarEntries.map((entry) => calendarPrefix ? { ...entry, title: `${calendarPrefix}${entry.title}` } : entry));
         syncedSlugs.push(calendarSlug(calendarId));
       } catch (error) {
         // One unreachable calendar must not wipe the lines the others already wrote.
