@@ -1082,6 +1082,9 @@ function keySlug(key) {
   const separator = key.indexOf(":");
   return separator >= 0 ? key.slice(0, separator) : key;
 }
+function dateInScope(date, scope) {
+  return !scope || date >= scope.from && date <= scope.to;
+}
 function findStoredLine(lines, stored, claimed) {
   const dates = lineDates(lines);
   for (let index = 0; index < lines.length; index++) {
@@ -1117,7 +1120,7 @@ function migrateLegacyMarkers(lines, legacySlug, entries) {
   });
   return migrated;
 }
-async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs) {
+async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs, scope) {
   const path = monthFilePath(folder, year, month);
   const file = await openMonthFile(app, folder, year, month);
   const original = await app.vault.read(file);
@@ -1127,12 +1130,13 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs)
   const metadata = await readMetadata(app, folder, year, month);
   const previous = { ...metadata.entries };
   result.migrated = migrateLegacyMarkers(lines, syncedSlugs[0] ?? "primary", previous);
-  const wanted = new Map(entries.map((entry) => [entry.key, entry]));
+  const scopedEntries = entries.filter((entry) => dateInScope(entry.date, scope));
+  const wanted = new Map(scopedEntries.map((entry) => [entry.key, entry]));
   const replacements = /* @__PURE__ */ new Map();
   const removals = /* @__PURE__ */ new Set();
   const insertions = [];
   const claimed = /* @__PURE__ */ new Set();
-  for (const entry of entries) {
+  for (const entry of scopedEntries) {
     const stored = previous[entry.key];
     const desired = renderEntryLine(entry);
     if (stored) {
@@ -1171,7 +1175,7 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs)
     }
   }
   for (const [key, stored] of Object.entries(previous)) {
-    if (wanted.has(key) || !syncedSlugs.includes(keySlug(key)))
+    if (wanted.has(key) || !syncedSlugs.includes(keySlug(key)) || !dateInScope(stored.date, scope))
       continue;
     const existingIndex = findStoredLine(lines, stored, claimed);
     if (existingIndex !== null) {
@@ -1186,11 +1190,11 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs)
   for (const entry of insertions)
     lines = insertItemLine(lines, entry.date, renderEntryLine(entry), style);
   const nextEntries = { ...previous };
-  for (const key of Object.keys(nextEntries)) {
-    if (!wanted.has(key) && syncedSlugs.includes(keySlug(key)))
+  for (const [key, stored] of Object.entries(nextEntries)) {
+    if (!wanted.has(key) && syncedSlugs.includes(keySlug(key)) && dateInScope(stored.date, scope))
       delete nextEntries[key];
   }
-  for (const entry of entries) {
+  for (const entry of scopedEntries) {
     nextEntries[entry.key] = { date: entry.date, time: entry.time, title: entry.title };
   }
   const updated = lines.join("\n");
@@ -1230,6 +1234,8 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
     }
     this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read", callback: () => void this.testGoogleCalendarRead() });
     this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar (current + next month)", callback: () => void this.syncGoogleCalendar() });
+    this.addCommand({ id: "sync-google-calendar-day", name: "Sync Google Calendar: one day", callback: () => void this.syncGoogleCalendarDay() });
+    this.addCommand({ id: "sync-google-calendar-range", name: "Sync Google Calendar: date range (fiscal year default)", callback: () => void this.syncGoogleCalendarCustomRange() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
   }
@@ -1316,10 +1322,39 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       notifyGoogleError(error);
     }
   }
-  /** Mirrors one calendar month into its `<sourceFolder>/YYYY-MM.md` file. */
-  async syncGoogleCalendarMonth(accessToken, year, month) {
-    const start = new Date(year, month - 1, 1).toISOString();
-    const end = new Date(year, month, 1).toISOString();
+  isoLocal(date) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  }
+  parseSyncDate(value, label) {
+    const trimmed = value.trim();
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (!match)
+      throw new Error(`${label}\u306F YYYY-MM-DD \u5F62\u5F0F\u3067\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044\u3002`);
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(year, month - 1, day);
+    if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+      throw new Error(`${label}\u306E\u65E5\u4ED8\u304C\u6B63\u3057\u304F\u3042\u308A\u307E\u305B\u3093\u3002`);
+    }
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+  }
+  fiscalYearRange(reference = /* @__PURE__ */ new Date()) {
+    const startYear = reference.getMonth() + 1 >= 4 ? reference.getFullYear() : reference.getFullYear() - 1;
+    return { from: `${startYear}-04-01`, to: `${startYear + 1}-03-31` };
+  }
+  /** Mirrors one calendar month (or a clipped range within it) into its month file. */
+  async syncGoogleCalendarMonth(accessToken, year, month, requestedScope) {
+    const monthFrom = `${year}-${pad2(month)}-01`;
+    const monthTo = `${year}-${pad2(month)}-${pad2(new Date(year, month, 0).getDate())}`;
+    const scope = {
+      from: requestedScope && requestedScope.from > monthFrom ? requestedScope.from : monthFrom,
+      to: requestedScope && requestedScope.to < monthTo ? requestedScope.to : monthTo
+    };
+    if (scope.from > scope.to)
+      throw new Error(`${year}-${pad2(month)} \u306F\u6307\u5B9A\u671F\u9593\u306B\u542B\u307E\u308C\u3066\u3044\u307E\u305B\u3093\u3002`);
+    const start = (/* @__PURE__ */ new Date(`${scope.from}T00:00:00`)).toISOString();
+    const end = (/* @__PURE__ */ new Date(`${addDays(scope.to, 1)}T00:00:00`)).toISOString();
     const entries = [];
     const syncedSlugs = [];
     const failedCalendars = [];
@@ -1327,7 +1362,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       try {
         const events = await listGoogleEvents(accessToken, calendarId, start, end);
         const calendarPrefix = this.settings.googleCalendarPrefixes[calendarId]?.trim() ?? "";
-        const calendarEntries = toTechoEntries(events, year, month, calendarId);
+        const calendarEntries = toTechoEntries(events, year, month, calendarId).filter((entry) => entry.date >= scope.from && entry.date <= scope.to);
         entries.push(...calendarEntries.map((entry) => calendarPrefix ? { ...entry, title: `${calendarPrefix}${entry.title}` } : entry));
         syncedSlugs.push(calendarSlug(calendarId));
       } catch (error) {
@@ -1337,36 +1372,83 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
     }
     if (!syncedSlugs.length)
       throw new Error(`${year}-${pad2(month)} \u306F\u3069\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u304B\u3089\u3082\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002`);
-    const result = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs);
+    const sync = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs, scope);
     return {
-      summary: `${year}-${pad2(month)}: \u8FFD\u52A0${result.added} / \u66F4\u65B0${result.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${result.adopted} / \u524A\u9664${result.removed}`,
-      failedCalendars
+      summary: `${scope.from}\u301C${scope.to}: \u8FFD\u52A0${sync.added} / \u66F4\u65B0${sync.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${sync.adopted} / \u524A\u9664${sync.removed}`,
+      failedCalendars,
+      sync
     };
   }
-  /**
-   * Default Google sync is independent of the month currently shown in Techo.
-   * It always mirrors the current calendar month and the following calendar month.
-   */
-  async syncGoogleCalendar() {
+  async runGoogleCalendarRange(scope, label) {
     try {
+      if (scope.from > scope.to)
+        throw new Error("\u7D42\u4E86\u65E5\u306F\u958B\u59CB\u65E5\u4EE5\u964D\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
       const accessToken = await this.getGoogleAccessToken();
-      const now = /* @__PURE__ */ new Date();
-      const targets = [
-        new Date(now.getFullYear(), now.getMonth(), 1),
-        new Date(now.getFullYear(), now.getMonth() + 1, 1)
-      ];
-      const summaries = [];
+      const [fromYear, fromMonth] = scope.from.split("-").map(Number);
+      const [toYear, toMonth] = scope.to.split("-").map(Number);
+      let cursor = new Date(fromYear, fromMonth - 1, 1);
+      const lastMonth = new Date(toYear, toMonth - 1, 1);
+      let monthCount = 0;
       let failedCalendarCount = 0;
-      for (const target of targets) {
-        const year = target.getFullYear();
-        const month = target.getMonth() + 1;
-        const result = await this.syncGoogleCalendarMonth(accessToken, year, month);
-        summaries.push(result.summary);
+      const totals = { added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
+      while (cursor <= lastMonth) {
+        const result = await this.syncGoogleCalendarMonth(accessToken, cursor.getFullYear(), cursor.getMonth() + 1, scope);
+        monthCount++;
         failedCalendarCount += result.failedCalendars.length;
+        totals.added += result.sync.added;
+        totals.updated += result.sync.updated;
+        totals.adopted += result.sync.adopted;
+        totals.removed += result.sync.removed;
+        totals.migrated += result.sync.migrated;
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
-      const failureSummary = failedCalendarCount ? `\uFF08\u30AB\u30EC\u30F3\u30C0\u30FC\u53D6\u5F97\u5931\u6557 \u5EF6\u3079${failedCalendarCount}\u4EF6\uFF09` : "";
-      new import_obsidian6.Notice(`Google\u53D6\u5F97\uFF08\u4ECA\u6708\uFF0B\u7FCC\u6708\uFF09: ${summaries.join(" / ")}${failureSummary}`, 12e3);
+      const failureSummary = failedCalendarCount ? ` / \u30AB\u30EC\u30F3\u30C0\u30FC\u53D6\u5F97\u5931\u6557 \u5EF6\u3079${failedCalendarCount}\u4EF6` : "";
+      const migratedSummary = totals.migrated ? ` / UID\u79FB\u884C${totals.migrated}` : "";
+      new import_obsidian6.Notice(
+        `Google\u53D6\u5F97\uFF08${label}\uFF09: ${scope.from}\u301C${scope.to} / ${monthCount}\u304B\u6708 / \u8FFD\u52A0${totals.added} / \u66F4\u65B0${totals.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${totals.adopted} / \u524A\u9664${totals.removed}${migratedSummary}${failureSummary}`,
+        12e3
+      );
       await this.refreshMonthViews();
+    } catch (error) {
+      notifyGoogleError(error);
+    }
+  }
+  /** Default sync: current calendar month plus the following calendar month. */
+  async syncGoogleCalendar() {
+    const now = /* @__PURE__ */ new Date();
+    const from = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+    const to = this.isoLocal(nextMonth);
+    await this.runGoogleCalendarRange({ from, to }, "\u4ECA\u6708\uFF0B\u7FCC\u6708");
+  }
+  /** Prompts for one date, defaulting to today, and refreshes only that day. */
+  async syncGoogleCalendarDay() {
+    try {
+      const today = this.isoLocal(/* @__PURE__ */ new Date());
+      const input = window.prompt("Google Calendar\u304B\u3089\u53D6\u5F97\u3059\u308B\u65E5\u4ED8\uFF08YYYY-MM-DD\uFF09", today);
+      if (input === null)
+        return;
+      const date = this.parseSyncDate(input, "\u65E5\u4ED8");
+      await this.runGoogleCalendarRange({ from: date, to: date }, "1\u65E5");
+    } catch (error) {
+      notifyGoogleError(error);
+    }
+  }
+  /** Prompts for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
+  async syncGoogleCalendarCustomRange() {
+    try {
+      const defaults = this.fiscalYearRange();
+      const fromInput = window.prompt("Google Calendar\u53D6\u5F97\u306E\u958B\u59CB\u65E5\uFF08YYYY-MM-DD\uFF09", defaults.from);
+      if (fromInput === null)
+        return;
+      const toInput = window.prompt("Google Calendar\u53D6\u5F97\u306E\u7D42\u4E86\u65E5\uFF08YYYY-MM-DD\uFF09", defaults.to);
+      if (toInput === null)
+        return;
+      const from = this.parseSyncDate(fromInput, "\u958B\u59CB\u65E5");
+      const to = this.parseSyncDate(toInput, "\u7D42\u4E86\u65E5");
+      if (from > to)
+        throw new Error("\u7D42\u4E86\u65E5\u306F\u958B\u59CB\u65E5\u4EE5\u964D\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+      await this.runGoogleCalendarRange({ from, to }, "\u6307\u5B9A\u671F\u9593");
     } catch (error) {
       notifyGoogleError(error);
     }
@@ -1423,7 +1505,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
       new import_obsidian6.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
       const [targetYear, targetMonth] = targetDate.split("-").map(Number);
-      await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth);
+      await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
       await this.refreshMonthViews();
       if (result.htmlLink)
         console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
