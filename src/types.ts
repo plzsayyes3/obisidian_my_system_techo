@@ -26,6 +26,8 @@ export interface MySystemTechoSettings {
   googleCalendarId: string;
   /** Calendars mirrored into the techo. */
   googleCalendarIds: string[];
+  /** Last known Google Calendar display name, keyed by calendar id. */
+  googleCalendarNames: Record<string, string>;
   /** Exact text prepended to each mirrored event title, keyed by Google calendar id. */
   googleCalendarPrefixes: Record<string, string>;
   /** Calendar that "Add Google Calendar event" writes to. */
@@ -47,6 +49,7 @@ export const DEFAULT_SETTINGS: MySystemTechoSettings = {
   googleClientSecret: "",
   googleCalendarId: "primary",
   googleCalendarIds: ["primary"],
+  googleCalendarNames: {},
   googleCalendarPrefixes: {},
   googleWriteCalendarId: "primary",
 };
