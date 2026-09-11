@@ -199,11 +199,12 @@ export default class MySystemTechoPlugin extends Plugin {
     const start = new Date(`${scope.from}T00:00:00`).toISOString();
     const end = new Date(`${addDays(scope.to, 1)}T00:00:00`).toISOString();
 
+    const calendarIds = this.syncCalendarIds();
     const entries: GoogleTechoEntry[] = [];
     const syncedSlugs: string[] = [];
     const failedCalendars: string[] = [];
     const failureMessages: string[] = [];
-    for (const calendarId of this.syncCalendarIds()) {
+    for (const calendarId of calendarIds) {
       try {
         const events = await listGoogleEvents(accessToken, calendarId, start, end);
         const calendarPrefix = this.settings.googleCalendarPrefixes[calendarId]?.trim() ?? "";
@@ -216,7 +217,7 @@ export default class MySystemTechoPlugin extends Plugin {
         const message = this.describeError(error);
         failedCalendars.push(calendarId);
         failureMessages.push(message);
-        console.warn(`[My-system-Techo][Google sync] calendar fetch failed | ${scope.from}〜${scope.to} | ${message}`);
+        console.warn(`[My-system-Techo][Google sync][Google API] failed | ${scope.from}〜${scope.to} | ${calendarId} | ${message}`);
       }
     }
     if (!syncedSlugs.length) {
@@ -224,7 +225,23 @@ export default class MySystemTechoPlugin extends Plugin {
       throw new Error(`${year}-${pad2(month)} はどのカレンダーからも取得できませんでした。${reasons ? ` 原因: ${reasons}` : ""}`);
     }
 
-    const sync = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs, scope);
+    let sync: GoogleSyncResult;
+    try {
+      sync = await applyGoogleEvents(
+        this.app,
+        this.settings.sourceFolder,
+        year,
+        month,
+        entries,
+        syncedSlugs,
+        scope,
+        calendarSlug(calendarIds[0] ?? "primary"),
+      );
+    } catch (error) {
+      const message = this.describeError(error);
+      console.error(`[My-system-Techo][Google sync][Techo save] failed | ${scope.from}〜${scope.to} | ${message}`);
+      throw new Error(`Techoへの保存に失敗しました: ${message}`);
+    }
     return {
       summary: `${scope.from}〜${scope.to}: 追加${sync.added} / 更新${sync.updated} / 既存に紐付け${sync.adopted} / 削除${sync.removed}`,
       failedCalendars,
@@ -247,13 +264,17 @@ export default class MySystemTechoPlugin extends Plugin {
       let cursor = new Date(fromYear, fromMonth - 1, 1);
       const lastMonth = new Date(toYear, toMonth - 1, 1);
       let monthCount = 0;
-      let failedCalendarCount = 0;
+      const failedCalendars = new Set<string>();
+      const addedKeys = new Set<string>();
+      const removedKeys = new Set<string>();
       const totals = { added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
 
       while (cursor <= lastMonth) {
         const result = await this.syncGoogleCalendarMonth(accessToken, cursor.getFullYear(), cursor.getMonth() + 1, scope);
         monthCount++;
-        failedCalendarCount += result.failedCalendars.length;
+        result.failedCalendars.forEach((calendarId) => failedCalendars.add(calendarId));
+        result.sync.addedKeys.forEach((key) => addedKeys.add(key));
+        result.sync.removedKeys.forEach((key) => removedKeys.add(key));
         totals.added += result.sync.added;
         totals.updated += result.sync.updated;
         totals.adopted += result.sync.adopted;
@@ -262,11 +283,23 @@ export default class MySystemTechoPlugin extends Plugin {
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
 
+      // A date change across month files looks like one removal and one addition locally. Reconcile
+      // matching Google identities so the user-facing result reports it as one update.
+      let crossMonthUpdates = 0;
+      for (const key of addedKeys) {
+        if (removedKeys.has(key)) crossMonthUpdates++;
+      }
+      totals.added -= crossMonthUpdates;
+      totals.removed -= crossMonthUpdates;
+      totals.updated += crossMonthUpdates;
+
+      const failedCalendarCount = failedCalendars.size;
       console.log("[My-system-Techo][Google sync] completed", {
         label,
         scope,
         monthCount,
         failedCalendarCount,
+        crossMonthUpdates,
         ...totals,
       });
       const status = failedCalendarCount ? "一部失敗" : "同期成功";
@@ -365,22 +398,31 @@ export default class MySystemTechoPlugin extends Plugin {
         if (end <= start) throw new Error("終了時刻は開始時刻より後にしてください。");
       }
 
-      const accessToken = await this.getGoogleAccessToken();
-      const result = await createGoogleEvent(
-        accessToken,
-        this.settings.googleWriteCalendarId || this.syncCalendarIds()[0],
-        title.trim(),
-        start,
-        end,
-        allDay,
-      );
-      new Notice(`Google Calendarに「${title.trim()}」を追加しました。`);
+      if (this.googleSyncInProgress) {
+        new Notice("Google Calendarを同期中です。完了後にもう一度実行してください。");
+        return;
+      }
+      this.googleSyncInProgress = true;
+      try {
+        const accessToken = await this.getGoogleAccessToken();
+        const result = await createGoogleEvent(
+          accessToken,
+          this.settings.googleWriteCalendarId || this.syncCalendarIds()[0],
+          title.trim(),
+          start,
+          end,
+          allDay,
+        );
+        new Notice(`Google Calendarに「${title.trim()}」を追加しました。`);
 
-      // A newly created event only needs the day it was written to refreshed.
-      const [targetYear, targetMonth] = targetDate.split("-").map(Number);
-      await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
-      await this.refreshMonthViews();
-      if (result.htmlLink) console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
+        // A newly created event only needs the day it was written to refreshed.
+        const [targetYear, targetMonth] = targetDate.split("-").map(Number);
+        await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
+        await this.refreshMonthViews();
+        if (result.htmlLink) console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
+      } finally {
+        this.googleSyncInProgress = false;
+      }
     } catch (error) {
       notifyGoogleError(error);
     }
