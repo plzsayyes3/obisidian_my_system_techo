@@ -151,15 +151,24 @@ export async function listGoogleEvents(accessToken: string, calendarId: string, 
   return (data.items ?? []).map((event) => ({ id: event.id, summary: event.summary || "(無題)", start: event.start?.dateTime ?? event.start?.date ?? "", end: event.end?.dateTime ?? event.end?.date ?? "", allDay: !event.start?.dateTime }));
 }
 
-export async function createGoogleEvent(accessToken: string, calendarId: string, title: string, start: Date, end: Date): Promise<{ id: string; htmlLink?: string }> {
-  log("calendar event create started", { calendarId, title, start: start.toISOString(), end: end.toISOString() });
+export async function createGoogleEvent(accessToken: string, calendarId: string, title: string, start: Date, end: Date, allDay = false): Promise<{ id: string; htmlLink?: string }> {
+  const payload = allDay
+    ? { summary: title, start: { date: localDate(start) }, end: { date: localDate(end) } }
+    : { summary: title, start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() } };
+  log("calendar event create started", {
+    calendarId,
+    title,
+    allDay,
+    start: allDay ? localDate(start) : start.toISOString(),
+    end: allDay ? localDate(end) : end.toISOString(),
+  });
   const url = new URL(`${CALENDAR_ENDPOINT}/calendars/${encodeURIComponent(calendarId)}/events`);
   url.searchParams.set("sendUpdates", "none");
   const response = await requestUrl({
     url: url.toString(),
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ summary: title, start: { dateTime: start.toISOString() }, end: { dateTime: end.toISOString() } }),
+    body: JSON.stringify(payload),
     throw: false,
   });
   log("calendar event create response", { status: response.status });
