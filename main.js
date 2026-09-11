@@ -1495,9 +1495,10 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       const startTime = window.prompt("\u958B\u59CB\u6642\u523B\uFF08\u4F8B: 09:00\uFF09\u3002\u7A7A\u6B04\u306A\u3089\u7D42\u65E5\u4E88\u5B9A", "09:00");
       if (startTime === null)
         return;
+      const allDay = !startTime.trim();
       let start;
       let end;
-      if (!startTime.trim()) {
+      if (allDay) {
         start = /* @__PURE__ */ new Date(`${targetDate}T00:00:00`);
         end = new Date(start);
         end.setDate(end.getDate() + 1);
@@ -1515,7 +1516,14 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
           throw new Error("\u7D42\u4E86\u6642\u523B\u306F\u958B\u59CB\u6642\u523B\u3088\u308A\u5F8C\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
       }
       const accessToken = await this.getGoogleAccessToken();
-      const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
+      const result = await createGoogleEvent(
+        accessToken,
+        this.settings.googleWriteCalendarId || this.syncCalendarIds()[0],
+        title.trim(),
+        start,
+        end,
+        allDay
+      );
       new import_obsidian6.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
       const [targetYear, targetMonth] = targetDate.split("-").map(Number);
       await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
