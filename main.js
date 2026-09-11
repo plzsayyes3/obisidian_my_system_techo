@@ -1257,6 +1257,30 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
     await leaf.setViewState({ type: TECHO_VIEW_TYPE, active: true });
     this.app.workspace.revealLeaf(leaf);
   }
+  describeError(error) {
+    if (error instanceof Error && error.message)
+      return error.message;
+    if (typeof error === "string" && error.trim())
+      return error.trim();
+    if (error && typeof error === "object") {
+      const value = error;
+      for (const key of ["message", "error", "statusText", "text"]) {
+        const candidate = value[key];
+        if (typeof candidate === "string" && candidate.trim())
+          return candidate.trim();
+      }
+      const status = value.status ?? value.statusCode;
+      if (typeof status === "number" || typeof status === "string")
+        return `HTTP ${status}`;
+      try {
+        const json = JSON.stringify(error);
+        if (json && json !== "{}")
+          return json;
+      } catch {
+      }
+    }
+    return "Google Calendar\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
+  }
   async getGoogleAccessToken() {
     const config = this.settings.googleTokens;
     if (!this.settings.googleClientId || !config?.accessToken)
@@ -1305,8 +1329,8 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         calendarListCount = calendars.length;
         console.log("[My-system-Techo][Google read test] calendar list", calendars);
       } catch (error) {
-        calendarListError = error instanceof Error ? error.message : String(error);
-        console.warn("[My-system-Techo][Google read test] calendar list failed", calendarListError);
+        calendarListError = this.describeError(error);
+        console.warn(`[My-system-Techo][Google read test] calendar list failed | ${calendarListError}`);
       }
       const results = [];
       const failures = [];
@@ -1316,9 +1340,9 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
           results.push({ calendarId, count: events.length });
           console.log("[My-system-Techo][Google read test] events", { calendarId, count: events.length, sample: events.slice(0, 5) });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = this.describeError(error);
           failures.push({ calendarId, message });
-          console.warn("[My-system-Techo][Google read test] events failed", { calendarId, message });
+          console.warn(`[My-system-Techo][Google read test] events failed | ${calendarId} | ${message}`);
         }
       }
       if (!results.length) {
@@ -1370,6 +1394,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
     const entries = [];
     const syncedSlugs = [];
     const failedCalendars = [];
+    const failureMessages = [];
     for (const calendarId of this.syncCalendarIds()) {
       try {
         const events = await listGoogleEvents(accessToken, calendarId, start, end);
@@ -1378,13 +1403,16 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         entries.push(...calendarEntries.map((entry) => calendarPrefix ? { ...entry, title: `${calendarPrefix}${entry.title}` } : entry));
         syncedSlugs.push(calendarSlug(calendarId));
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = this.describeError(error);
         failedCalendars.push(calendarId);
-        console.warn("[My-system-Techo][Google sync] calendar fetch failed", { calendarId, scope, message });
+        failureMessages.push(message);
+        console.warn(`[My-system-Techo][Google sync] calendar fetch failed | ${scope.from}\u301C${scope.to} | ${message}`);
       }
     }
-    if (!syncedSlugs.length)
-      throw new Error(`${year}-${pad2(month)} \u306F\u3069\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u304B\u3089\u3082\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002`);
+    if (!syncedSlugs.length) {
+      const reasons = [...new Set(failureMessages)].join(" / ");
+      throw new Error(`${year}-${pad2(month)} \u306F\u3069\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u304B\u3089\u3082\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002${reasons ? ` \u539F\u56E0: ${reasons}` : ""}`);
+    }
     const sync = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs, scope);
     return {
       summary: `${scope.from}\u301C${scope.to}: \u8FFD\u52A0${sync.added} / \u66F4\u65B0${sync.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${sync.adopted} / \u524A\u9664${sync.removed}`,
@@ -1436,8 +1464,10 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       );
       await this.refreshMonthViews();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Google Calendar\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
-      console.error("[My-system-Techo][Google sync] failed", { label, scope, message });
+      const message = this.describeError(error);
+      console.error(`[My-system-Techo][Google sync] failed | ${label} | ${period} | ${message}`);
+      if (error instanceof Error && error.stack)
+        console.error(error.stack);
       new import_obsidian6.Notice(`\u540C\u671F\u5931\u6557\uFF5C${period}\uFF5C${message}`, 1e4);
     } finally {
       this.googleSyncInProgress = false;
