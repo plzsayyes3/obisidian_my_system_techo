@@ -8,6 +8,7 @@ import { GoogleSyncResult, GoogleSyncScope, GoogleTechoEntry, applyGoogleEvents 
 
 export default class MySystemTechoPlugin extends Plugin {
   settings: MySystemTechoSettings = DEFAULT_SETTINGS;
+  private googleSyncInProgress = false;
 
   async onload(): Promise<void> {
     const saved = await this.loadData();
@@ -33,9 +34,9 @@ export default class MySystemTechoPlugin extends Plugin {
     for (const scope of ["year", "month", "week"] as const) {
       this.addCommand({ id: `open-${scope}-view`, name: `Open ${scope} view`, callback: () => void this.openScope(scope) });
     }
-    this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read", callback: () => void this.testGoogleCalendarRead() });
-    this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar (current + next month)", callback: () => void this.syncGoogleCalendar() });
-    this.addCommand({ id: "sync-google-calendar-day", name: "Sync Google Calendar: one day", callback: () => void this.syncGoogleCalendarDay() });
+    this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read (current month)", callback: () => void this.testGoogleCalendarRead() });
+    this.addCommand({ id: "sync-google-calendar-day", name: "Sync Google Calendar: today", callback: () => void this.syncGoogleCalendarToday() });
+    this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar: current + next month", callback: () => void this.syncGoogleCalendar() });
     this.addCommand({ id: "sync-google-calendar-range", name: "Sync Google Calendar: date range (fiscal year default)", callback: () => void this.syncGoogleCalendarCustomRange() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
@@ -81,12 +82,15 @@ export default class MySystemTechoPlugin extends Plugin {
 
   /**
    * Read-only diagnostic. It never changes Markdown or Google Calendar.
-   * It separates calendar-list permission problems from event-read problems so OAuth failures are easier to identify.
+   * The diagnostic follows the same rule as the normal commands: today's date is the baseline,
+   * not whichever month happens to be open in the Techo view.
    */
   async testGoogleCalendarRead(): Promise<void> {
     try {
       const accessToken = await this.getGoogleAccessToken();
-      const { year, month } = this.settings;
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
       const start = new Date(year, month - 1, 1).toISOString();
       const end = new Date(year, month, 1).toISOString();
 
@@ -201,6 +205,11 @@ export default class MySystemTechoPlugin extends Plugin {
   }
 
   private async runGoogleCalendarRange(scope: GoogleSyncScope, label: string): Promise<void> {
+    if (this.googleSyncInProgress) {
+      new Notice("Google Calendarを同期中です。完了後にもう一度実行してください。");
+      return;
+    }
+    this.googleSyncInProgress = true;
     try {
       if (scope.from > scope.to) throw new Error("終了日は開始日以降にしてください。");
       const accessToken = await this.getGoogleAccessToken();
@@ -233,29 +242,24 @@ export default class MySystemTechoPlugin extends Plugin {
       await this.refreshMonthViews();
     } catch (error) {
       notifyGoogleError(error);
+    } finally {
+      this.googleSyncInProgress = false;
     }
   }
 
-  /** Default sync: current calendar month plus the following calendar month. */
+  /** Minimal daily sync: always refresh today, regardless of the open Techo view. */
+  async syncGoogleCalendarToday(): Promise<void> {
+    const today = this.isoLocal(new Date());
+    await this.runGoogleCalendarRange({ from: today, to: today }, "今日");
+  }
+
+  /** Broad sync: current calendar month plus the following calendar month, always based on today. */
   async syncGoogleCalendar(): Promise<void> {
     const now = new Date();
     const from = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const nextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 0);
     const to = this.isoLocal(nextMonth);
     await this.runGoogleCalendarRange({ from, to }, "今月＋翌月");
-  }
-
-  /** Prompts for one date, defaulting to today, and refreshes only that day. */
-  async syncGoogleCalendarDay(): Promise<void> {
-    try {
-      const today = this.isoLocal(new Date());
-      const input = window.prompt("Google Calendarから取得する日付（YYYY-MM-DD）", today);
-      if (input === null) return;
-      const date = this.parseSyncDate(input, "日付");
-      await this.runGoogleCalendarRange({ from: date, to: date }, "1日");
-    } catch (error) {
-      notifyGoogleError(error);
-    }
   }
 
   /** Prompts for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
@@ -289,17 +293,18 @@ export default class MySystemTechoPlugin extends Plugin {
     }
   }
 
-  /** Today when the displayed month is the current one, otherwise its first day: `2月30日` is not a date. */
-  private defaultEventDate(): string {
-    const { year, month } = this.settings;
-    const today = new Date();
-    const day = today.getFullYear() === year && today.getMonth() + 1 === month ? today.getDate() : 1;
-    return `${year}-${pad2(month)}-${pad2(day)}`;
-  }
-
   async addGoogleCalendarEvent(date?: string): Promise<void> {
     try {
-      const targetDate = date || this.defaultEventDate();
+      let targetDate: string;
+      if (date) {
+        targetDate = this.parseSyncDate(date, "日付");
+      } else {
+        const today = this.isoLocal(new Date());
+        const input = window.prompt("Google Calendarへ追加する日付（YYYY-MM-DD）", today);
+        if (input === null) return;
+        targetDate = this.parseSyncDate(input, "日付");
+      }
+
       const title = window.prompt(`${targetDate} にGoogle Calendarへ追加する予定のタイトル`);
       if (!title?.trim()) return;
       const startTime = window.prompt("開始時刻（例: 09:00）。空欄なら終日予定", "09:00");
