@@ -1149,16 +1149,25 @@ function migrateLegacyMarkers(lines, legacySlug, entries) {
   });
   return migrated;
 }
-async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs, scope) {
+async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs, scope, legacySlug = syncedSlugs[0] ?? "primary") {
   const path = monthFilePath(folder, year, month);
   const file = await openMonthFile(app, folder, year, month);
   const original = await app.vault.read(file);
   let lines = original.split(/\r?\n/);
   const style = detectDateHeadingStyle(lines);
-  const result = { path, added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
+  const result = {
+    path,
+    added: 0,
+    updated: 0,
+    adopted: 0,
+    removed: 0,
+    migrated: 0,
+    addedKeys: [],
+    removedKeys: []
+  };
   const metadata = await readMetadata(app, folder, year, month);
   const previous = { ...metadata.entries };
-  result.migrated = migrateLegacyMarkers(lines, syncedSlugs[0] ?? "primary", previous);
+  result.migrated = migrateLegacyMarkers(lines, legacySlug, previous);
   const scopedEntries = entries.filter((entry) => dateInScope(entry.date, scope));
   const wanted = new Map(scopedEntries.map((entry) => [entry.key, entry]));
   const replacements = /* @__PURE__ */ new Map();
@@ -1201,6 +1210,7 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs,
     } else {
       insertions.push(entry);
       result.added++;
+      result.addedKeys.push(entry.key);
     }
   }
   for (const [key, stored] of Object.entries(previous)) {
@@ -1210,6 +1220,7 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs,
     if (existingIndex !== null) {
       removals.add(existingIndex);
       result.removed++;
+      result.removedKeys.push(key);
     }
   }
   for (const [index, text] of replacements)
@@ -1466,11 +1477,12 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       throw new Error(`${year}-${pad2(month)} \u306F\u6307\u5B9A\u671F\u9593\u306B\u542B\u307E\u308C\u3066\u3044\u307E\u305B\u3093\u3002`);
     const start = (/* @__PURE__ */ new Date(`${scope.from}T00:00:00`)).toISOString();
     const end = (/* @__PURE__ */ new Date(`${addDays(scope.to, 1)}T00:00:00`)).toISOString();
+    const calendarIds = this.syncCalendarIds();
     const entries = [];
     const syncedSlugs = [];
     const failedCalendars = [];
     const failureMessages = [];
-    for (const calendarId of this.syncCalendarIds()) {
+    for (const calendarId of calendarIds) {
       try {
         const events = await listGoogleEvents(accessToken, calendarId, start, end);
         const calendarPrefix = this.settings.googleCalendarPrefixes[calendarId]?.trim() ?? "";
@@ -1481,14 +1493,30 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         const message = this.describeError(error);
         failedCalendars.push(calendarId);
         failureMessages.push(message);
-        console.warn(`[My-system-Techo][Google sync] calendar fetch failed | ${scope.from}\u301C${scope.to} | ${message}`);
+        console.warn(`[My-system-Techo][Google sync][Google API] failed | ${scope.from}\u301C${scope.to} | ${calendarId} | ${message}`);
       }
     }
     if (!syncedSlugs.length) {
       const reasons = [...new Set(failureMessages)].join(" / ");
       throw new Error(`${year}-${pad2(month)} \u306F\u3069\u306E\u30AB\u30EC\u30F3\u30C0\u30FC\u304B\u3089\u3082\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002${reasons ? ` \u539F\u56E0: ${reasons}` : ""}`);
     }
-    const sync = await applyGoogleEvents(this.app, this.settings.sourceFolder, year, month, entries, syncedSlugs, scope);
+    let sync;
+    try {
+      sync = await applyGoogleEvents(
+        this.app,
+        this.settings.sourceFolder,
+        year,
+        month,
+        entries,
+        syncedSlugs,
+        scope,
+        calendarSlug(calendarIds[0] ?? "primary")
+      );
+    } catch (error) {
+      const message = this.describeError(error);
+      console.error(`[My-system-Techo][Google sync][Techo save] failed | ${scope.from}\u301C${scope.to} | ${message}`);
+      throw new Error(`Techo\u3078\u306E\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${message}`);
+    }
     return {
       summary: `${scope.from}\u301C${scope.to}: \u8FFD\u52A0${sync.added} / \u66F4\u65B0${sync.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${sync.adopted} / \u524A\u9664${sync.removed}`,
       failedCalendars,
@@ -1511,12 +1539,16 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       let cursor = new Date(fromYear, fromMonth - 1, 1);
       const lastMonth = new Date(toYear, toMonth - 1, 1);
       let monthCount = 0;
-      let failedCalendarCount = 0;
+      const failedCalendars = /* @__PURE__ */ new Set();
+      const addedKeys = /* @__PURE__ */ new Set();
+      const removedKeys = /* @__PURE__ */ new Set();
       const totals = { added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
       while (cursor <= lastMonth) {
         const result = await this.syncGoogleCalendarMonth(accessToken, cursor.getFullYear(), cursor.getMonth() + 1, scope);
         monthCount++;
-        failedCalendarCount += result.failedCalendars.length;
+        result.failedCalendars.forEach((calendarId) => failedCalendars.add(calendarId));
+        result.sync.addedKeys.forEach((key) => addedKeys.add(key));
+        result.sync.removedKeys.forEach((key) => removedKeys.add(key));
         totals.added += result.sync.added;
         totals.updated += result.sync.updated;
         totals.adopted += result.sync.adopted;
@@ -1524,11 +1556,21 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         totals.migrated += result.sync.migrated;
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
+      let crossMonthUpdates = 0;
+      for (const key of addedKeys) {
+        if (removedKeys.has(key))
+          crossMonthUpdates++;
+      }
+      totals.added -= crossMonthUpdates;
+      totals.removed -= crossMonthUpdates;
+      totals.updated += crossMonthUpdates;
+      const failedCalendarCount = failedCalendars.size;
       console.log("[My-system-Techo][Google sync] completed", {
         label,
         scope,
         monthCount,
         failedCalendarCount,
+        crossMonthUpdates,
         ...totals
       });
       const status = failedCalendarCount ? "\u4E00\u90E8\u5931\u6557" : "\u540C\u671F\u6210\u529F";
@@ -1631,21 +1673,30 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         if (end <= start)
           throw new Error("\u7D42\u4E86\u6642\u523B\u306F\u958B\u59CB\u6642\u523B\u3088\u308A\u5F8C\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
       }
-      const accessToken = await this.getGoogleAccessToken();
-      const result = await createGoogleEvent(
-        accessToken,
-        this.settings.googleWriteCalendarId || this.syncCalendarIds()[0],
-        title.trim(),
-        start,
-        end,
-        allDay
-      );
-      new import_obsidian6.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
-      const [targetYear, targetMonth] = targetDate.split("-").map(Number);
-      await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
-      await this.refreshMonthViews();
-      if (result.htmlLink)
-        console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
+      if (this.googleSyncInProgress) {
+        new import_obsidian6.Notice("Google Calendar\u3092\u540C\u671F\u4E2D\u3067\u3059\u3002\u5B8C\u4E86\u5F8C\u306B\u3082\u3046\u4E00\u5EA6\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+        return;
+      }
+      this.googleSyncInProgress = true;
+      try {
+        const accessToken = await this.getGoogleAccessToken();
+        const result = await createGoogleEvent(
+          accessToken,
+          this.settings.googleWriteCalendarId || this.syncCalendarIds()[0],
+          title.trim(),
+          start,
+          end,
+          allDay
+        );
+        new import_obsidian6.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
+        const [targetYear, targetMonth] = targetDate.split("-").map(Number);
+        await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
+        await this.refreshMonthViews();
+        if (result.htmlLink)
+          console.log("[My-system-Techo][Google OAuth] created event link", result.htmlLink);
+      } finally {
+        this.googleSyncInProgress = false;
+      }
     } catch (error) {
       notifyGoogleError(error);
     }
