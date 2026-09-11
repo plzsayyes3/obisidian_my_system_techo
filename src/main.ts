@@ -309,9 +309,10 @@ export default class MySystemTechoPlugin extends Plugin {
       if (!title?.trim()) return;
       const startTime = window.prompt("開始時刻（例: 09:00）。空欄なら終日予定", "09:00");
       if (startTime === null) return;
+      const allDay = !startTime.trim();
       let start: Date;
       let end: Date;
-      if (!startTime.trim()) {
+      if (allDay) {
         start = new Date(`${targetDate}T00:00:00`);
         end = new Date(start);
         end.setDate(end.getDate() + 1);
@@ -326,7 +327,14 @@ export default class MySystemTechoPlugin extends Plugin {
       }
 
       const accessToken = await this.getGoogleAccessToken();
-      const result = await createGoogleEvent(accessToken, this.settings.googleWriteCalendarId || this.syncCalendarIds()[0], title.trim(), start, end);
+      const result = await createGoogleEvent(
+        accessToken,
+        this.settings.googleWriteCalendarId || this.syncCalendarIds()[0],
+        title.trim(),
+        start,
+        end,
+        allDay,
+      );
       new Notice(`Google Calendarに「${title.trim()}」を追加しました。`);
 
       // A newly created event only needs the day it was written to refreshed.
