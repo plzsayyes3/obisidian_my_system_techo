@@ -1,8 +1,7 @@
-import { App, TFile } from "obsidian";
+import { App } from "obsidian";
 import {
   GOOGLE_MARKER,
   detectDateHeadingStyle,
-  ensureFolder,
   insertItemLine,
   joinPath,
   lineDates,
@@ -68,12 +67,28 @@ function validStoredEntry(value: unknown): value is StoredGoogleEntry {
   return typeof entry.date === "string" && typeof entry.title === "string" && (entry.time === undefined || typeof entry.time === "string");
 }
 
-async function readMetadata(app: App, folder: string, year: number, month: number): Promise<GoogleSyncMetadata> {
-  const file = app.vault.getAbstractFileByPath(metadataPath(folder, year, month));
-  if (!(file instanceof TFile)) return { version: 1, entries: {} };
+/** Hidden dot-folders are outside the Vault API's visible file cache, so use the Adapter directly. */
+async function ensureAdapterFolder(app: App, folder: string): Promise<void> {
+  const prefix = folder.replace(/^\/+|\/+$/g, "");
+  if (!prefix) return;
 
+  let current = "";
+  for (const segment of prefix.split("/")) {
+    current = current ? `${current}/${segment}` : segment;
+    if (await app.vault.adapter.exists(current)) continue;
+    try {
+      await app.vault.adapter.mkdir(current);
+    } catch (error) {
+      if (!(await app.vault.adapter.exists(current))) throw error;
+    }
+  }
+}
+
+async function readMetadata(app: App, folder: string, year: number, month: number): Promise<GoogleSyncMetadata> {
+  const path = metadataPath(folder, year, month);
   try {
-    const parsed = JSON.parse(await app.vault.read(file)) as { entries?: Record<string, unknown> };
+    if (!(await app.vault.adapter.exists(path))) return { version: 1, entries: {} };
+    const parsed = JSON.parse(await app.vault.adapter.read(path)) as { entries?: Record<string, unknown> };
     const entries: Record<string, StoredGoogleEntry> = {};
     if (parsed?.entries && typeof parsed.entries === "object") {
       for (const [key, value] of Object.entries(parsed.entries)) {
@@ -90,28 +105,11 @@ async function readMetadata(app: App, folder: string, year: number, month: numbe
 
 async function writeMetadata(app: App, folder: string, year: number, month: number, metadata: GoogleSyncMetadata): Promise<void> {
   const directory = metadataFolder(folder);
-  await ensureFolder(app, directory);
+  await ensureAdapterFolder(app, directory);
   const path = metadataPath(folder, year, month);
   const text = `${JSON.stringify(metadata, null, 2)}\n`;
-  const existing = app.vault.getAbstractFileByPath(path);
-  if (existing instanceof TFile) {
-    await app.vault.modify(existing, text);
-    return;
-  }
-  if (existing) throw new Error(`Google同期メタデータ ${path} は通常のファイルではありません。`);
-
-  try {
-    await app.vault.create(path, text);
-  } catch (error) {
-    // Another writer can create the sidecar after the existence check. Treat that as an update,
-    // not as a failed sync.
-    const raced = app.vault.getAbstractFileByPath(path);
-    if (raced instanceof TFile) {
-      await app.vault.modify(raced, text);
-      return;
-    }
-    throw error;
-  }
+  // Adapter.write creates or replaces the hidden sidecar without relying on Vault's hidden-file cache.
+  await app.vault.adapter.write(path, text);
 }
 
 function keySlug(key: string): string {
