@@ -641,9 +641,18 @@ async function openMonthFile(app, folder, year, month) {
   const existing = app.vault.getAbstractFileByPath(path);
   if (existing instanceof import_obsidian3.TFile)
     return existing;
+  if (existing)
+    throw new Error(`\u540C\u671F\u5148 ${path} \u306F\u901A\u5E38\u306E\u30D5\u30A1\u30A4\u30EB\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002`);
   await ensureFolder(app, folder);
-  return app.vault.create(path, `# ${year}\u5E74${month}\u6708
+  try {
+    return await app.vault.create(path, `# ${year}\u5E74${month}\u6708
 `);
+  } catch (error) {
+    const raced = app.vault.getAbstractFileByPath(path);
+    if (raced instanceof import_obsidian3.TFile)
+      return raced;
+    throw error;
+  }
 }
 var DEFAULT_DATE_HEADING_STYLE = { level: 2, iso: false, weekday: true, blankAfterHeading: true };
 function detectDateHeadingStyle(lines) {
@@ -1081,10 +1090,22 @@ async function writeMetadata(app, folder, year, month, metadata) {
   const text = `${JSON.stringify(metadata, null, 2)}
 `;
   const existing = app.vault.getAbstractFileByPath(path);
-  if (existing instanceof import_obsidian5.TFile)
+  if (existing instanceof import_obsidian5.TFile) {
     await app.vault.modify(existing, text);
-  else
+    return;
+  }
+  if (existing)
+    throw new Error(`Google\u540C\u671F\u30E1\u30BF\u30C7\u30FC\u30BF ${path} \u306F\u901A\u5E38\u306E\u30D5\u30A1\u30A4\u30EB\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002`);
+  try {
     await app.vault.create(path, text);
+  } catch (error) {
+    const raced = app.vault.getAbstractFileByPath(path);
+    if (raced instanceof import_obsidian5.TFile) {
+      await app.vault.modify(raced, text);
+      return;
+    }
+    throw error;
+  }
 }
 function keySlug(key) {
   const separator = key.indexOf(":");
