@@ -22,7 +22,7 @@ __export(main_exports, {
   default: () => MySystemTechoPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_SETTINGS = {
@@ -1049,7 +1049,6 @@ function todayIso() {
 }
 
 // src/data/googleSync.ts
-var import_obsidian5 = require("obsidian");
 function renderEntryLine(entry) {
   return `- ${entry.time ? `${entry.time} ` : ""}${entry.title}`;
 }
@@ -1065,12 +1064,29 @@ function validStoredEntry(value) {
   const entry = value;
   return typeof entry.date === "string" && typeof entry.title === "string" && (entry.time === void 0 || typeof entry.time === "string");
 }
+async function ensureAdapterFolder(app, folder) {
+  const prefix = folder.replace(/^\/+|\/+$/g, "");
+  if (!prefix)
+    return;
+  let current = "";
+  for (const segment of prefix.split("/")) {
+    current = current ? `${current}/${segment}` : segment;
+    if (await app.vault.adapter.exists(current))
+      continue;
+    try {
+      await app.vault.adapter.mkdir(current);
+    } catch (error) {
+      if (!await app.vault.adapter.exists(current))
+        throw error;
+    }
+  }
+}
 async function readMetadata(app, folder, year, month) {
-  const file = app.vault.getAbstractFileByPath(metadataPath(folder, year, month));
-  if (!(file instanceof import_obsidian5.TFile))
-    return { version: 1, entries: {} };
+  const path = metadataPath(folder, year, month);
   try {
-    const parsed = JSON.parse(await app.vault.read(file));
+    if (!await app.vault.adapter.exists(path))
+      return { version: 1, entries: {} };
+    const parsed = JSON.parse(await app.vault.adapter.read(path));
     const entries = {};
     if (parsed?.entries && typeof parsed.entries === "object") {
       for (const [key, value] of Object.entries(parsed.entries)) {
@@ -1085,27 +1101,11 @@ async function readMetadata(app, folder, year, month) {
 }
 async function writeMetadata(app, folder, year, month, metadata) {
   const directory = metadataFolder(folder);
-  await ensureFolder(app, directory);
+  await ensureAdapterFolder(app, directory);
   const path = metadataPath(folder, year, month);
   const text = `${JSON.stringify(metadata, null, 2)}
 `;
-  const existing = app.vault.getAbstractFileByPath(path);
-  if (existing instanceof import_obsidian5.TFile) {
-    await app.vault.modify(existing, text);
-    return;
-  }
-  if (existing)
-    throw new Error(`Google\u540C\u671F\u30E1\u30BF\u30C7\u30FC\u30BF ${path} \u306F\u901A\u5E38\u306E\u30D5\u30A1\u30A4\u30EB\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002`);
-  try {
-    await app.vault.create(path, text);
-  } catch (error) {
-    const raced = app.vault.getAbstractFileByPath(path);
-    if (raced instanceof import_obsidian5.TFile) {
-      await app.vault.modify(raced, text);
-      return;
-    }
-    throw error;
-  }
+  await app.vault.adapter.write(path, text);
 }
 function keySlug(key) {
   const separator = key.indexOf(":");
@@ -1234,7 +1234,7 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs,
 }
 
 // src/main.ts
-var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
+var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -1374,7 +1374,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       const eventSummary = results.map((item) => `${item.calendarId}=${item.count}\u4EF6`).join(" / ");
       const listSummary = calendarListCount === null ? `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u306F\u5931\u6557\uFF08${calendarListError ?? "\u539F\u56E0\u4E0D\u660E"}\uFF09` : `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7${calendarListCount}\u4EF6`;
       const failureSummary = failures.length ? ` / \u53D6\u5F97\u5931\u6557${failures.length}\u4EF6` : "";
-      new import_obsidian6.Notice(`Google\u53D6\u5F97\u30C6\u30B9\u30C8\u6210\u529F: ${listSummary} / ${year}-${pad2(month)} \u4E88\u5B9A\u5408\u8A08${total}\u4EF6 / ${eventSummary}${failureSummary}`, 12e3);
+      new import_obsidian5.Notice(`Google\u53D6\u5F97\u30C6\u30B9\u30C8\u6210\u529F: ${listSummary} / ${year}-${pad2(month)} \u4E88\u5B9A\u5408\u8A08${total}\u4EF6 / ${eventSummary}${failureSummary}`, 12e3);
     } catch (error) {
       notifyGoogleError(error);
     }
@@ -1444,7 +1444,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
   async runGoogleCalendarRange(scope, label) {
     const period = scope.from === scope.to ? scope.from : `${scope.from}\u301C${scope.to}`;
     if (this.googleSyncInProgress) {
-      new import_obsidian6.Notice("Google Calendar\u3092\u540C\u671F\u4E2D\u3067\u3059\u3002\u5B8C\u4E86\u5F8C\u306B\u3082\u3046\u4E00\u5EA6\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+      new import_obsidian5.Notice("Google Calendar\u3092\u540C\u671F\u4E2D\u3067\u3059\u3002\u5B8C\u4E86\u5F8C\u306B\u3082\u3046\u4E00\u5EA6\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
       return;
     }
     this.googleSyncInProgress = true;
@@ -1479,7 +1479,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       });
       const status = failedCalendarCount ? "\u4E00\u90E8\u5931\u6557" : "\u540C\u671F\u6210\u529F";
       const failureSummary = failedCalendarCount ? `\uFF5C\u53D6\u5F97\u5931\u6557 ${failedCalendarCount}\u4EF6` : "";
-      new import_obsidian6.Notice(
+      new import_obsidian5.Notice(
         `${status}\uFF5C${period}\uFF5C\u8FFD\u52A0 ${totals.added}\u30FB\u66F4\u65B0 ${totals.updated}\u30FB\u524A\u9664 ${totals.removed}${failureSummary}`,
         8e3
       );
@@ -1489,7 +1489,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       console.error(`[My-system-Techo][Google sync] failed | ${label} | ${period} | ${message}`);
       if (error instanceof Error && error.stack)
         console.error(error.stack);
-      new import_obsidian6.Notice(`\u540C\u671F\u5931\u6557\uFF5C${period}\uFF5C${message}`, 1e4);
+      new import_obsidian5.Notice(`\u540C\u671F\u5931\u6557\uFF5C${period}\uFF5C${message}`, 1e4);
     } finally {
       this.googleSyncInProgress = false;
     }
@@ -1586,7 +1586,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         end,
         allDay
       );
-      new import_obsidian6.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
+      new import_obsidian5.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
       const [targetYear, targetMonth] = targetDate.split("-").map(Number);
       await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
       await this.refreshMonthViews();
