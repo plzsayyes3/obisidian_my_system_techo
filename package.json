@@ -1,6 +1,6 @@
 {
   "name": "obsidian-my-system-techo",
-  "version": "0.4.11",
+  "version": "0.4.12",
   "description": "My-system-Techo Obsidian plugin",
   "main": "main.js",
   "scripts": {
