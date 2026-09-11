@@ -74,6 +74,9 @@ palette, it asks for a date with **today** as the default, then asks for the tit
 button inside a day cell is intentionally different: because the user explicitly selected a day, that
 clicked date is used directly.
 
+Leaving the start time blank creates a real Google Calendar all-day event (`start.date` / `end.date`),
+not a 00:00-to-00:00 timed event.
+
 After creating an event, only its target day is refreshed back into the Techo Markdown.
 
 ### Choosing calendars
