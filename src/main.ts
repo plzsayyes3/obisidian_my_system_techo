@@ -190,8 +190,9 @@ export default class MySystemTechoPlugin extends Plugin {
         syncedSlugs.push(calendarSlug(calendarId));
       } catch (error) {
         // One unreachable calendar must not wipe the lines the others already wrote.
+        const message = error instanceof Error ? error.message : String(error);
         failedCalendars.push(calendarId);
-        notifyGoogleError(error);
+        console.warn("[My-system-Techo][Google sync] calendar fetch failed", { calendarId, scope, message });
       }
     }
     if (!syncedSlugs.length) throw new Error(`${year}-${pad2(month)} はどのカレンダーからも取得できませんでした。`);
@@ -205,6 +206,7 @@ export default class MySystemTechoPlugin extends Plugin {
   }
 
   private async runGoogleCalendarRange(scope: GoogleSyncScope, label: string): Promise<void> {
+    const period = scope.from === scope.to ? scope.from : `${scope.from}〜${scope.to}`;
     if (this.googleSyncInProgress) {
       new Notice("Google Calendarを同期中です。完了後にもう一度実行してください。");
       return;
@@ -233,15 +235,24 @@ export default class MySystemTechoPlugin extends Plugin {
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
 
-      const failureSummary = failedCalendarCount ? ` / カレンダー取得失敗 延べ${failedCalendarCount}件` : "";
-      const migratedSummary = totals.migrated ? ` / UID移行${totals.migrated}` : "";
+      console.log("[My-system-Techo][Google sync] completed", {
+        label,
+        scope,
+        monthCount,
+        failedCalendarCount,
+        ...totals,
+      });
+      const status = failedCalendarCount ? "一部失敗" : "同期成功";
+      const failureSummary = failedCalendarCount ? `｜取得失敗 ${failedCalendarCount}件` : "";
       new Notice(
-        `Google取得（${label}）: ${scope.from}〜${scope.to} / ${monthCount}か月 / 追加${totals.added} / 更新${totals.updated} / 既存に紐付け${totals.adopted} / 削除${totals.removed}${migratedSummary}${failureSummary}`,
-        12000,
+        `${status}｜${period}｜追加 ${totals.added}・更新 ${totals.updated}・削除 ${totals.removed}${failureSummary}`,
+        8000,
       );
       await this.refreshMonthViews();
     } catch (error) {
-      notifyGoogleError(error);
+      const message = error instanceof Error ? error.message : "Google Calendarとの通信に失敗しました。";
+      console.error("[My-system-Techo][Google sync] failed", { label, scope, message });
+      new Notice(`同期失敗｜${period}｜${message}`, 10000);
     } finally {
       this.googleSyncInProgress = false;
     }
