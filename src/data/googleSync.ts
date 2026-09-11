@@ -94,8 +94,24 @@ async function writeMetadata(app: App, folder: string, year: number, month: numb
   const path = metadataPath(folder, year, month);
   const text = `${JSON.stringify(metadata, null, 2)}\n`;
   const existing = app.vault.getAbstractFileByPath(path);
-  if (existing instanceof TFile) await app.vault.modify(existing, text);
-  else await app.vault.create(path, text);
+  if (existing instanceof TFile) {
+    await app.vault.modify(existing, text);
+    return;
+  }
+  if (existing) throw new Error(`Google同期メタデータ ${path} は通常のファイルではありません。`);
+
+  try {
+    await app.vault.create(path, text);
+  } catch (error) {
+    // Another writer can create the sidecar after the existence check. Treat that as an update,
+    // not as a failed sync.
+    const raced = app.vault.getAbstractFileByPath(path);
+    if (raced instanceof TFile) {
+      await app.vault.modify(raced, text);
+      return;
+    }
+    throw error;
+  }
 }
 
 function keySlug(key: string): string {
