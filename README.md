@@ -28,17 +28,25 @@ Google Calendar integration is being redesigned for desktop and Obsidian Mobile 
 
 ### Bringing events into the techo
 
-The default `Sync Google Calendar` command (and the **Google取得** button in the view) mirrors the
-**current calendar month and the following calendar month**, based on today's date, into
-`<Markdownフォルダ>/YYYY-MM.md`. The month currently displayed in Techo does not change this default
-sync range.
+Google commands use **today's actual date as their baseline**, not whichever month or week happens to
+be open in the Techo view.
 
-Two additional commands provide narrower or broader refresh ranges:
+The toolbar's **今日同期** button and the `Sync Google Calendar: today` command refresh only today's
+Google Calendar events. This is the minimal everyday sync.
 
-- `Sync Google Calendar: one day` prompts for one `YYYY-MM-DD`, defaulting to today, and updates only that day.
-- `Sync Google Calendar: date range (fiscal year default)` prompts for start/end dates. Its defaults are the
-  current Japanese fiscal year, **April 1 through March 31**. For example, in September 2026 the defaults are
-  `2026-04-01` through `2027-03-31`; in February 2027 they are the same fiscal-year boundaries.
+The `Sync Google Calendar: current + next month` command mirrors the **current calendar month and the
+following calendar month**, based on today's date, into `<Markdownフォルダ>/YYYY-MM.md`. For example,
+on September 11, 2026 it refreshes September 1 through October 31, 2026 regardless of the month shown
+in Techo.
+
+The `Sync Google Calendar: date range (fiscal year default)` command prompts for start/end dates. Its
+defaults are the current Japanese fiscal year, **April 1 through March 31**. For example, in September
+2026 the defaults are `2026-04-01` through `2027-03-31`; in February 2027 they are the same fiscal-year
+boundaries. The same command can be used with identical start/end dates when an arbitrary single day
+needs to be refreshed.
+
+Google sync commands are guarded against overlapping runs so two syncs do not write the month file and
+sidecar metadata at the same time.
 
 Partial-day/month syncs only delete or replace Google-owned records inside the requested date range.
 Other dates in the same month remain untouched, including their sidecar ownership records.
@@ -58,6 +66,15 @@ Other dates in the same month remain untouched, including their sidecar ownershi
   recreated separately if needed, preserving the user's edit.
 - A matching line already written by hand is adopted instead of duplicated on first sync.
 - All-day events are written without a time and span every day they cover.
+
+### Adding Google Calendar events
+
+`Add Google Calendar event` no longer depends on the open Techo month. When run from the command
+palette, it asks for a date with **today** as the default, then asks for the title and time. The `G+`
+button inside a day cell is intentionally different: because the user explicitly selected a day, that
+clicked date is used directly.
+
+After creating an event, only its target day is refreshed back into the Techo Markdown.
 
 ### Choosing calendars
 
