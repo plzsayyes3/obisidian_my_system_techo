@@ -57,16 +57,17 @@ export class TechoView extends ItemView {
       };
     }
 
-    const sync = toolbar.createEl("button", { text: "Google取得" });
+    const sync = toolbar.createEl("button", { text: "今日同期" });
+    sync.setAttr("aria-label", "今日のGoogle Calendar予定を同期");
     sync.onclick = async () => {
       sync.disabled = true;
-      sync.setText("取得中…");
+      sync.setText("同期中…");
       try {
-        await this.plugin.syncGoogleCalendar();
+        await this.plugin.syncGoogleCalendarToday();
       } finally {
-        // syncGoogleCalendar re-renders on success, which replaces this button.
+        // Successful sync re-renders the view and replaces this button.
         sync.disabled = false;
-        sync.setText("Google取得");
+        sync.setText("今日同期");
       }
     };
   }
