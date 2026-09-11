@@ -46,10 +46,14 @@ export interface GoogleSyncResult {
   removed: number;
   /** Legacy inline %%gcal:...%% markers moved into sidecar metadata. */
   migrated: number;
-  /** Internal identities used to reconcile cross-month date moves as updates. */
+  /** Visible lines newly inserted for these identities. Internal aggregation only. */
   addedKeys: string[];
-  /** Internal identities used to reconcile cross-month date moves as updates. */
+  /** Visible lines actually removed for these identities. Internal aggregation only. */
   removedKeys: string[];
+  /** Identities that newly entered this month's sidecar, including adopted existing lines. */
+  enteredKeys: string[];
+  /** Identities that left this month's sidecar, even when a hand-edited visible line was preserved. */
+  leftKeys: string[];
 }
 
 /** Google-owned lines are now ordinary readable Markdown. Identity lives in the sidecar file. */
@@ -207,6 +211,8 @@ export async function applyGoogleEvents(
     migrated: 0,
     addedKeys: [],
     removedKeys: [],
+    enteredKeys: [],
+    leftKeys: [],
   };
 
   const metadata = await readMetadata(app, folder, year, month);
@@ -255,6 +261,10 @@ export async function applyGoogleEvents(
       continue;
     }
 
+    // This identity is newly owned by this month. It may be a genuinely new event or the destination
+    // of a cross-month date move; the range aggregator resolves that distinction after every month.
+    result.enteredKeys.push(entry.key);
+
     // First sidecar sync (or a newly created Google event): adopt an exact line already present in
     // the techo rather than duplicating it.
     const adoptable = findEntryLine(lines, entry, claimed);
@@ -268,11 +278,12 @@ export async function applyGoogleEvents(
     }
   }
 
-  // Remove events that disappeared from Google only when we can still find the exact line the
-  // plugin previously wrote. Partial syncs only consider stored events whose previous date falls
-  // inside the requested range; all other dates in the month remain untouched.
+  // Remove events that disappeared from Google only for calendars that were successfully fetched.
+  // The identity leaves sidecar ownership even when an exact visible line cannot be found because
+  // the user edited it; in that case the visible Markdown is intentionally preserved.
   for (const [key, stored] of Object.entries(previous)) {
     if (wanted.has(key) || !syncedSlugs.includes(keySlug(key)) || !dateInScope(stored.date, scope)) continue;
+    result.leftKeys.push(key);
     const existingIndex = findStoredLine(lines, stored, claimed);
     if (existingIndex !== null) {
       removals.add(existingIndex);

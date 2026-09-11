@@ -267,6 +267,8 @@ export default class MySystemTechoPlugin extends Plugin {
       const failedCalendars = new Set<string>();
       const addedKeys = new Set<string>();
       const removedKeys = new Set<string>();
+      const enteredKeys = new Set<string>();
+      const leftKeys = new Set<string>();
       const totals = { added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
 
       while (cursor <= lastMonth) {
@@ -275,6 +277,8 @@ export default class MySystemTechoPlugin extends Plugin {
         result.failedCalendars.forEach((calendarId) => failedCalendars.add(calendarId));
         result.sync.addedKeys.forEach((key) => addedKeys.add(key));
         result.sync.removedKeys.forEach((key) => removedKeys.add(key));
+        result.sync.enteredKeys.forEach((key) => enteredKeys.add(key));
+        result.sync.leftKeys.forEach((key) => leftKeys.add(key));
         totals.added += result.sync.added;
         totals.updated += result.sync.updated;
         totals.adopted += result.sync.adopted;
@@ -283,14 +287,16 @@ export default class MySystemTechoPlugin extends Plugin {
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
 
-      // A date change across month files looks like one removal and one addition locally. Reconcile
-      // matching Google identities so the user-facing result reports it as one update.
+      // A date change across month files changes sidecar ownership even when either visible line was
+      // adopted or hand-edited. Count the Google event as an update while only undoing visible add/
+      // remove counters that actually happened.
       let crossMonthUpdates = 0;
-      for (const key of addedKeys) {
-        if (removedKeys.has(key)) crossMonthUpdates++;
+      for (const key of enteredKeys) {
+        if (!leftKeys.has(key)) continue;
+        crossMonthUpdates++;
+        if (addedKeys.has(key)) totals.added--;
+        if (removedKeys.has(key)) totals.removed--;
       }
-      totals.added -= crossMonthUpdates;
-      totals.removed -= crossMonthUpdates;
       totals.updated += crossMonthUpdates;
 
       const failedCalendarCount = failedCalendars.size;
@@ -367,15 +373,10 @@ export default class MySystemTechoPlugin extends Plugin {
 
   async addGoogleCalendarEvent(date?: string): Promise<void> {
     try {
-      let targetDate: string;
-      if (date) {
-        targetDate = this.parseSyncDate(date, "日付");
-      } else {
-        const today = this.isoLocal(new Date());
-        const input = await promptText(this.app, "Google Calendarへ追加する日付（YYYY-MM-DD）", today);
-        if (input === null) return;
-        targetDate = this.parseSyncDate(input, "日付");
-      }
+      const initialDate = date ? this.parseSyncDate(date, "日付") : this.isoLocal(new Date());
+      const dateInput = await promptText(this.app, "Google Calendarへ追加する日付（YYYY-MM-DD）", initialDate);
+      if (dateInput === null) return;
+      const targetDate = this.parseSyncDate(dateInput, "日付");
 
       const title = await promptText(this.app, `${targetDate} にGoogle Calendarへ追加する予定のタイトル`);
       if (!title?.trim()) return;
