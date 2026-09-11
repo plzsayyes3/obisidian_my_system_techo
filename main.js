@@ -1378,8 +1378,9 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         entries.push(...calendarEntries.map((entry) => calendarPrefix ? { ...entry, title: `${calendarPrefix}${entry.title}` } : entry));
         syncedSlugs.push(calendarSlug(calendarId));
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         failedCalendars.push(calendarId);
-        notifyGoogleError(error);
+        console.warn("[My-system-Techo][Google sync] calendar fetch failed", { calendarId, scope, message });
       }
     }
     if (!syncedSlugs.length)
@@ -1392,6 +1393,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
     };
   }
   async runGoogleCalendarRange(scope, label) {
+    const period = scope.from === scope.to ? scope.from : `${scope.from}\u301C${scope.to}`;
     if (this.googleSyncInProgress) {
       new import_obsidian6.Notice("Google Calendar\u3092\u540C\u671F\u4E2D\u3067\u3059\u3002\u5B8C\u4E86\u5F8C\u306B\u3082\u3046\u4E00\u5EA6\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
       return;
@@ -1419,15 +1421,24 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         totals.migrated += result.sync.migrated;
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
-      const failureSummary = failedCalendarCount ? ` / \u30AB\u30EC\u30F3\u30C0\u30FC\u53D6\u5F97\u5931\u6557 \u5EF6\u3079${failedCalendarCount}\u4EF6` : "";
-      const migratedSummary = totals.migrated ? ` / UID\u79FB\u884C${totals.migrated}` : "";
+      console.log("[My-system-Techo][Google sync] completed", {
+        label,
+        scope,
+        monthCount,
+        failedCalendarCount,
+        ...totals
+      });
+      const status = failedCalendarCount ? "\u4E00\u90E8\u5931\u6557" : "\u540C\u671F\u6210\u529F";
+      const failureSummary = failedCalendarCount ? `\uFF5C\u53D6\u5F97\u5931\u6557 ${failedCalendarCount}\u4EF6` : "";
       new import_obsidian6.Notice(
-        `Google\u53D6\u5F97\uFF08${label}\uFF09: ${scope.from}\u301C${scope.to} / ${monthCount}\u304B\u6708 / \u8FFD\u52A0${totals.added} / \u66F4\u65B0${totals.updated} / \u65E2\u5B58\u306B\u7D10\u4ED8\u3051${totals.adopted} / \u524A\u9664${totals.removed}${migratedSummary}${failureSummary}`,
-        12e3
+        `${status}\uFF5C${period}\uFF5C\u8FFD\u52A0 ${totals.added}\u30FB\u66F4\u65B0 ${totals.updated}\u30FB\u524A\u9664 ${totals.removed}${failureSummary}`,
+        8e3
       );
       await this.refreshMonthViews();
     } catch (error) {
-      notifyGoogleError(error);
+      const message = error instanceof Error ? error.message : "Google Calendar\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
+      console.error("[My-system-Techo][Google sync] failed", { label, scope, message });
+      new import_obsidian6.Notice(`\u540C\u671F\u5931\u6557\uFF5C${period}\uFF5C${message}`, 1e4);
     } finally {
       this.googleSyncInProgress = false;
     }
