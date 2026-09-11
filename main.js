@@ -1209,6 +1209,7 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
+    this.googleSyncInProgress = false;
   }
   async onload() {
     const saved = await this.loadData();
@@ -1232,9 +1233,9 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
     for (const scope of ["year", "month", "week"]) {
       this.addCommand({ id: `open-${scope}-view`, name: `Open ${scope} view`, callback: () => void this.openScope(scope) });
     }
-    this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read", callback: () => void this.testGoogleCalendarRead() });
-    this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar (current + next month)", callback: () => void this.syncGoogleCalendar() });
-    this.addCommand({ id: "sync-google-calendar-day", name: "Sync Google Calendar: one day", callback: () => void this.syncGoogleCalendarDay() });
+    this.addCommand({ id: "test-google-calendar-read", name: "Test Google Calendar read (current month)", callback: () => void this.testGoogleCalendarRead() });
+    this.addCommand({ id: "sync-google-calendar-day", name: "Sync Google Calendar: today", callback: () => void this.syncGoogleCalendarToday() });
+    this.addCommand({ id: "sync-google-calendar", name: "Sync Google Calendar: current + next month", callback: () => void this.syncGoogleCalendar() });
     this.addCommand({ id: "sync-google-calendar-range", name: "Sync Google Calendar: date range (fiscal year default)", callback: () => void this.syncGoogleCalendarCustomRange() });
     this.addCommand({ id: "add-google-calendar-event", name: "Add Google Calendar event", callback: () => void this.addGoogleCalendarEvent() });
     this.addSettingTab(new MySystemTechoSettingTab(this.app, this));
@@ -1278,12 +1279,15 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
   }
   /**
    * Read-only diagnostic. It never changes Markdown or Google Calendar.
-   * It separates calendar-list permission problems from event-read problems so OAuth failures are easier to identify.
+   * The diagnostic follows the same rule as the normal commands: today's date is the baseline,
+   * not whichever month happens to be open in the Techo view.
    */
   async testGoogleCalendarRead() {
     try {
       const accessToken = await this.getGoogleAccessToken();
-      const { year, month } = this.settings;
+      const now = /* @__PURE__ */ new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
       const start = new Date(year, month - 1, 1).toISOString();
       const end = new Date(year, month, 1).toISOString();
       let calendarListCount = null;
@@ -1380,6 +1384,11 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
     };
   }
   async runGoogleCalendarRange(scope, label) {
+    if (this.googleSyncInProgress) {
+      new import_obsidian6.Notice("Google Calendar\u3092\u540C\u671F\u4E2D\u3067\u3059\u3002\u5B8C\u4E86\u5F8C\u306B\u3082\u3046\u4E00\u5EA6\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+      return;
+    }
+    this.googleSyncInProgress = true;
     try {
       if (scope.from > scope.to)
         throw new Error("\u7D42\u4E86\u65E5\u306F\u958B\u59CB\u65E5\u4EE5\u964D\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
@@ -1411,28 +1420,22 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       await this.refreshMonthViews();
     } catch (error) {
       notifyGoogleError(error);
+    } finally {
+      this.googleSyncInProgress = false;
     }
   }
-  /** Default sync: current calendar month plus the following calendar month. */
+  /** Minimal daily sync: always refresh today, regardless of the open Techo view. */
+  async syncGoogleCalendarToday() {
+    const today = this.isoLocal(/* @__PURE__ */ new Date());
+    await this.runGoogleCalendarRange({ from: today, to: today }, "\u4ECA\u65E5");
+  }
+  /** Broad sync: current calendar month plus the following calendar month, always based on today. */
   async syncGoogleCalendar() {
     const now = /* @__PURE__ */ new Date();
     const from = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
     const nextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 0);
     const to = this.isoLocal(nextMonth);
     await this.runGoogleCalendarRange({ from, to }, "\u4ECA\u6708\uFF0B\u7FCC\u6708");
-  }
-  /** Prompts for one date, defaulting to today, and refreshes only that day. */
-  async syncGoogleCalendarDay() {
-    try {
-      const today = this.isoLocal(/* @__PURE__ */ new Date());
-      const input = window.prompt("Google Calendar\u304B\u3089\u53D6\u5F97\u3059\u308B\u65E5\u4ED8\uFF08YYYY-MM-DD\uFF09", today);
-      if (input === null)
-        return;
-      const date = this.parseSyncDate(input, "\u65E5\u4ED8");
-      await this.runGoogleCalendarRange({ from: date, to: date }, "1\u65E5");
-    } catch (error) {
-      notifyGoogleError(error);
-    }
   }
   /** Prompts for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
   async syncGoogleCalendarCustomRange() {
@@ -1466,16 +1469,18 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         await view.render();
     }
   }
-  /** Today when the displayed month is the current one, otherwise its first day: `2月30日` is not a date. */
-  defaultEventDate() {
-    const { year, month } = this.settings;
-    const today = /* @__PURE__ */ new Date();
-    const day = today.getFullYear() === year && today.getMonth() + 1 === month ? today.getDate() : 1;
-    return `${year}-${pad2(month)}-${pad2(day)}`;
-  }
   async addGoogleCalendarEvent(date) {
     try {
-      const targetDate = date || this.defaultEventDate();
+      let targetDate;
+      if (date) {
+        targetDate = this.parseSyncDate(date, "\u65E5\u4ED8");
+      } else {
+        const today = this.isoLocal(/* @__PURE__ */ new Date());
+        const input = window.prompt("Google Calendar\u3078\u8FFD\u52A0\u3059\u308B\u65E5\u4ED8\uFF08YYYY-MM-DD\uFF09", today);
+        if (input === null)
+          return;
+        targetDate = this.parseSyncDate(input, "\u65E5\u4ED8");
+      }
       const title = window.prompt(`${targetDate} \u306BGoogle Calendar\u3078\u8FFD\u52A0\u3059\u308B\u4E88\u5B9A\u306E\u30BF\u30A4\u30C8\u30EB`);
       if (!title?.trim())
         return;
