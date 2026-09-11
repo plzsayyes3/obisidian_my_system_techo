@@ -46,6 +46,10 @@ export interface GoogleSyncResult {
   removed: number;
   /** Legacy inline %%gcal:...%% markers moved into sidecar metadata. */
   migrated: number;
+  /** Internal identities used to reconcile cross-month date moves as updates. */
+  addedKeys: string[];
+  /** Internal identities used to reconcile cross-month date moves as updates. */
+  removedKeys: string[];
 }
 
 /** Google-owned lines are now ordinary readable Markdown. Identity lives in the sidecar file. */
@@ -155,7 +159,7 @@ function migrateLegacyMarkers(lines: string[], legacySlug: string, entries: Reco
     if (!parsed || !raw || !dates[index]) return;
 
     // Before multi-calendar support markers carried only an event id. Treat those as belonging to
-    // the first currently synced calendar, matching the old migration behaviour.
+    // the configured legacy calendar even if that calendar failed during this particular fetch.
     const key = raw.includes(":") ? raw : `${legacySlug}:${raw}`;
     if (!entries[key]) entries[key] = { date: dates[index], time: parsed.time, title: parsed.title };
 
@@ -186,6 +190,7 @@ export async function applyGoogleEvents(
   entries: GoogleTechoEntry[],
   syncedSlugs: string[],
   scope?: GoogleSyncScope,
+  legacySlug = syncedSlugs[0] ?? "primary",
 ): Promise<GoogleSyncResult> {
   const path = monthFilePath(folder, year, month);
   const file = await openMonthFile(app, folder, year, month);
@@ -193,11 +198,20 @@ export async function applyGoogleEvents(
   const original = await app.vault.read(file);
   let lines = original.split(/\r?\n/);
   const style = detectDateHeadingStyle(lines);
-  const result: GoogleSyncResult = { path, added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
+  const result: GoogleSyncResult = {
+    path,
+    added: 0,
+    updated: 0,
+    adopted: 0,
+    removed: 0,
+    migrated: 0,
+    addedKeys: [],
+    removedKeys: [],
+  };
 
   const metadata = await readMetadata(app, folder, year, month);
   const previous: Record<string, StoredGoogleEntry> = { ...metadata.entries };
-  result.migrated = migrateLegacyMarkers(lines, syncedSlugs[0] ?? "primary", previous);
+  result.migrated = migrateLegacyMarkers(lines, legacySlug, previous);
 
   const scopedEntries = entries.filter((entry) => dateInScope(entry.date, scope));
   const wanted = new Map(scopedEntries.map((entry) => [entry.key, entry]));
@@ -250,6 +264,7 @@ export async function applyGoogleEvents(
     } else {
       insertions.push(entry);
       result.added++;
+      result.addedKeys.push(entry.key);
     }
   }
 
@@ -262,6 +277,7 @@ export async function applyGoogleEvents(
     if (existingIndex !== null) {
       removals.add(existingIndex);
       result.removed++;
+      result.removedKeys.push(key);
     }
   }
 
