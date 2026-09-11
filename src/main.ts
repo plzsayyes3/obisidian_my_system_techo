@@ -5,6 +5,7 @@ import { MySystemTechoSettingTab } from "./settings";
 import { TECHO_VIEW_TYPE, TechoView } from "./views/techo";
 import { GoogleCalendarSummary, calendarSlug, createGoogleEvent, listGoogleCalendars, listGoogleEvents, notifyGoogleError, refreshGoogleToken, toTechoEntries } from "./google";
 import { GoogleSyncResult, GoogleSyncScope, GoogleTechoEntry, applyGoogleEvents } from "./data/googleSync";
+import { promptText } from "./ui/textPrompt";
 
 export default class MySystemTechoPlugin extends Plugin {
   settings: MySystemTechoSettings = DEFAULT_SETTINGS;
@@ -300,13 +301,13 @@ export default class MySystemTechoPlugin extends Plugin {
     await this.runGoogleCalendarRange({ from, to }, "今月＋翌月");
   }
 
-  /** Prompts for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
+  /** Opens Obsidian input dialogs for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
   async syncGoogleCalendarCustomRange(): Promise<void> {
     try {
       const defaults = this.fiscalYearRange();
-      const fromInput = window.prompt("Google Calendar取得の開始日（YYYY-MM-DD）", defaults.from);
+      const fromInput = await promptText(this.app, "Google Calendar取得の開始日（YYYY-MM-DD）", defaults.from);
       if (fromInput === null) return;
-      const toInput = window.prompt("Google Calendar取得の終了日（YYYY-MM-DD）", defaults.to);
+      const toInput = await promptText(this.app, "Google Calendar取得の終了日（YYYY-MM-DD）", defaults.to);
       if (toInput === null) return;
       const from = this.parseSyncDate(fromInput, "開始日");
       const to = this.parseSyncDate(toInput, "終了日");
@@ -338,14 +339,14 @@ export default class MySystemTechoPlugin extends Plugin {
         targetDate = this.parseSyncDate(date, "日付");
       } else {
         const today = this.isoLocal(new Date());
-        const input = window.prompt("Google Calendarへ追加する日付（YYYY-MM-DD）", today);
+        const input = await promptText(this.app, "Google Calendarへ追加する日付（YYYY-MM-DD）", today);
         if (input === null) return;
         targetDate = this.parseSyncDate(input, "日付");
       }
 
-      const title = window.prompt(`${targetDate} にGoogle Calendarへ追加する予定のタイトル`);
+      const title = await promptText(this.app, `${targetDate} にGoogle Calendarへ追加する予定のタイトル`);
       if (!title?.trim()) return;
-      const startTime = window.prompt("開始時刻（例: 09:00）。空欄なら終日予定", "09:00");
+      const startTime = await promptText(this.app, "開始時刻（例: 09:00）。空欄なら終日予定", "09:00");
       if (startTime === null) return;
       const allDay = !startTime.trim();
       let start: Date;
@@ -356,7 +357,7 @@ export default class MySystemTechoPlugin extends Plugin {
         end.setDate(end.getDate() + 1);
       } else {
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime.trim())) throw new Error("開始時刻は HH:MM 形式で入力してください。");
-        const endTime = window.prompt("終了時刻（例: 10:00）", "10:00");
+        const endTime = await promptText(this.app, "終了時刻（例: 10:00）", "10:00");
         if (endTime === null) return;
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime.trim())) throw new Error("終了時刻は HH:MM 形式で入力してください。");
         start = new Date(`${targetDate}T${startTime.trim()}:00`);
