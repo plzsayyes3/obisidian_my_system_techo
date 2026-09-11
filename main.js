@@ -22,7 +22,7 @@ __export(main_exports, {
   default: () => MySystemTechoPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_SETTINGS = {
@@ -1233,8 +1233,62 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs,
   return result;
 }
 
+// src/ui/textPrompt.ts
+var import_obsidian5 = require("obsidian");
+var TextPromptModal = class extends import_obsidian5.Modal {
+  constructor(app, promptText2, initialValue, resolveValue) {
+    super(app);
+    this.promptText = promptText2;
+    this.resolveValue = resolveValue;
+    this.settled = false;
+    this.value = initialValue;
+  }
+  onOpen() {
+    this.contentEl.empty();
+    this.contentEl.createEl("h2", { text: this.promptText });
+    let inputEl = null;
+    new import_obsidian5.Setting(this.contentEl).addText((text) => {
+      text.setValue(this.value);
+      text.onChange((value) => {
+        this.value = value;
+      });
+      inputEl = text.inputEl;
+      text.inputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.isComposing) {
+          event.preventDefault();
+          this.finish(this.value);
+        }
+      });
+    });
+    new import_obsidian5.Setting(this.contentEl).addButton((button) => button.setButtonText("\u30AD\u30E3\u30F3\u30BB\u30EB").onClick(() => this.finish(null))).addButton((button) => button.setButtonText("OK").setCta().onClick(() => this.finish(this.value)));
+    window.setTimeout(() => {
+      inputEl?.focus();
+      inputEl?.select();
+    }, 0);
+  }
+  onClose() {
+    this.contentEl.empty();
+    if (!this.settled) {
+      this.settled = true;
+      this.resolveValue(null);
+    }
+  }
+  finish(value) {
+    if (this.settled)
+      return;
+    this.settled = true;
+    this.resolveValue(value);
+    this.close();
+  }
+};
+function promptText(app, title, initialValue = "") {
+  return new Promise((resolve) => {
+    new TextPromptModal(app, title, initialValue, resolve).open();
+  });
+}
+
 // src/main.ts
-var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
+var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -1374,7 +1428,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       const eventSummary = results.map((item) => `${item.calendarId}=${item.count}\u4EF6`).join(" / ");
       const listSummary = calendarListCount === null ? `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7\u306F\u5931\u6557\uFF08${calendarListError ?? "\u539F\u56E0\u4E0D\u660E"}\uFF09` : `\u30AB\u30EC\u30F3\u30C0\u30FC\u4E00\u89A7${calendarListCount}\u4EF6`;
       const failureSummary = failures.length ? ` / \u53D6\u5F97\u5931\u6557${failures.length}\u4EF6` : "";
-      new import_obsidian5.Notice(`Google\u53D6\u5F97\u30C6\u30B9\u30C8\u6210\u529F: ${listSummary} / ${year}-${pad2(month)} \u4E88\u5B9A\u5408\u8A08${total}\u4EF6 / ${eventSummary}${failureSummary}`, 12e3);
+      new import_obsidian6.Notice(`Google\u53D6\u5F97\u30C6\u30B9\u30C8\u6210\u529F: ${listSummary} / ${year}-${pad2(month)} \u4E88\u5B9A\u5408\u8A08${total}\u4EF6 / ${eventSummary}${failureSummary}`, 12e3);
     } catch (error) {
       notifyGoogleError(error);
     }
@@ -1444,7 +1498,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
   async runGoogleCalendarRange(scope, label) {
     const period = scope.from === scope.to ? scope.from : `${scope.from}\u301C${scope.to}`;
     if (this.googleSyncInProgress) {
-      new import_obsidian5.Notice("Google Calendar\u3092\u540C\u671F\u4E2D\u3067\u3059\u3002\u5B8C\u4E86\u5F8C\u306B\u3082\u3046\u4E00\u5EA6\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+      new import_obsidian6.Notice("Google Calendar\u3092\u540C\u671F\u4E2D\u3067\u3059\u3002\u5B8C\u4E86\u5F8C\u306B\u3082\u3046\u4E00\u5EA6\u5B9F\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
       return;
     }
     this.googleSyncInProgress = true;
@@ -1479,7 +1533,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       });
       const status = failedCalendarCount ? "\u4E00\u90E8\u5931\u6557" : "\u540C\u671F\u6210\u529F";
       const failureSummary = failedCalendarCount ? `\uFF5C\u53D6\u5F97\u5931\u6557 ${failedCalendarCount}\u4EF6` : "";
-      new import_obsidian5.Notice(
+      new import_obsidian6.Notice(
         `${status}\uFF5C${period}\uFF5C\u8FFD\u52A0 ${totals.added}\u30FB\u66F4\u65B0 ${totals.updated}\u30FB\u524A\u9664 ${totals.removed}${failureSummary}`,
         8e3
       );
@@ -1489,7 +1543,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       console.error(`[My-system-Techo][Google sync] failed | ${label} | ${period} | ${message}`);
       if (error instanceof Error && error.stack)
         console.error(error.stack);
-      new import_obsidian5.Notice(`\u540C\u671F\u5931\u6557\uFF5C${period}\uFF5C${message}`, 1e4);
+      new import_obsidian6.Notice(`\u540C\u671F\u5931\u6557\uFF5C${period}\uFF5C${message}`, 1e4);
     } finally {
       this.googleSyncInProgress = false;
     }
@@ -1507,14 +1561,14 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
     const to = this.isoLocal(nextMonth);
     await this.runGoogleCalendarRange({ from, to }, "\u4ECA\u6708\uFF0B\u7FCC\u6708");
   }
-  /** Prompts for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
+  /** Opens Obsidian input dialogs for an arbitrary range. Defaults to the current Japanese fiscal year, 4/1–3/31. */
   async syncGoogleCalendarCustomRange() {
     try {
       const defaults = this.fiscalYearRange();
-      const fromInput = window.prompt("Google Calendar\u53D6\u5F97\u306E\u958B\u59CB\u65E5\uFF08YYYY-MM-DD\uFF09", defaults.from);
+      const fromInput = await promptText(this.app, "Google Calendar\u53D6\u5F97\u306E\u958B\u59CB\u65E5\uFF08YYYY-MM-DD\uFF09", defaults.from);
       if (fromInput === null)
         return;
-      const toInput = window.prompt("Google Calendar\u53D6\u5F97\u306E\u7D42\u4E86\u65E5\uFF08YYYY-MM-DD\uFF09", defaults.to);
+      const toInput = await promptText(this.app, "Google Calendar\u53D6\u5F97\u306E\u7D42\u4E86\u65E5\uFF08YYYY-MM-DD\uFF09", defaults.to);
       if (toInput === null)
         return;
       const from = this.parseSyncDate(fromInput, "\u958B\u59CB\u65E5");
@@ -1546,15 +1600,15 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
         targetDate = this.parseSyncDate(date, "\u65E5\u4ED8");
       } else {
         const today = this.isoLocal(/* @__PURE__ */ new Date());
-        const input = window.prompt("Google Calendar\u3078\u8FFD\u52A0\u3059\u308B\u65E5\u4ED8\uFF08YYYY-MM-DD\uFF09", today);
+        const input = await promptText(this.app, "Google Calendar\u3078\u8FFD\u52A0\u3059\u308B\u65E5\u4ED8\uFF08YYYY-MM-DD\uFF09", today);
         if (input === null)
           return;
         targetDate = this.parseSyncDate(input, "\u65E5\u4ED8");
       }
-      const title = window.prompt(`${targetDate} \u306BGoogle Calendar\u3078\u8FFD\u52A0\u3059\u308B\u4E88\u5B9A\u306E\u30BF\u30A4\u30C8\u30EB`);
+      const title = await promptText(this.app, `${targetDate} \u306BGoogle Calendar\u3078\u8FFD\u52A0\u3059\u308B\u4E88\u5B9A\u306E\u30BF\u30A4\u30C8\u30EB`);
       if (!title?.trim())
         return;
-      const startTime = window.prompt("\u958B\u59CB\u6642\u523B\uFF08\u4F8B: 09:00\uFF09\u3002\u7A7A\u6B04\u306A\u3089\u7D42\u65E5\u4E88\u5B9A", "09:00");
+      const startTime = await promptText(this.app, "\u958B\u59CB\u6642\u523B\uFF08\u4F8B: 09:00\uFF09\u3002\u7A7A\u6B04\u306A\u3089\u7D42\u65E5\u4E88\u5B9A", "09:00");
       if (startTime === null)
         return;
       const allDay = !startTime.trim();
@@ -1567,7 +1621,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
       } else {
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime.trim()))
           throw new Error("\u958B\u59CB\u6642\u523B\u306F HH:MM \u5F62\u5F0F\u3067\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
-        const endTime = window.prompt("\u7D42\u4E86\u6642\u523B\uFF08\u4F8B: 10:00\uFF09", "10:00");
+        const endTime = await promptText(this.app, "\u7D42\u4E86\u6642\u523B\uFF08\u4F8B: 10:00\uFF09", "10:00");
         if (endTime === null)
           return;
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime.trim()))
@@ -1586,7 +1640,7 @@ var MySystemTechoPlugin = class extends import_obsidian5.Plugin {
         end,
         allDay
       );
-      new import_obsidian5.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
+      new import_obsidian6.Notice(`Google Calendar\u306B\u300C${title.trim()}\u300D\u3092\u8FFD\u52A0\u3057\u307E\u3057\u305F\u3002`);
       const [targetYear, targetMonth] = targetDate.split("-").map(Number);
       await this.syncGoogleCalendarMonth(accessToken, targetYear, targetMonth, { from: targetDate, to: targetDate });
       await this.refreshMonthViews();
