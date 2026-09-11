@@ -840,15 +840,16 @@ var TechoView = class extends import_obsidian4.ItemView {
         await this.render();
       };
     }
-    const sync = toolbar.createEl("button", { text: "Google\u53D6\u5F97" });
+    const sync = toolbar.createEl("button", { text: "\u4ECA\u65E5\u540C\u671F" });
+    sync.setAttr("aria-label", "\u4ECA\u65E5\u306EGoogle Calendar\u4E88\u5B9A\u3092\u540C\u671F");
     sync.onclick = async () => {
       sync.disabled = true;
-      sync.setText("\u53D6\u5F97\u4E2D\u2026");
+      sync.setText("\u540C\u671F\u4E2D\u2026");
       try {
-        await this.plugin.syncGoogleCalendar();
+        await this.plugin.syncGoogleCalendarToday();
       } finally {
         sync.disabled = false;
-        sync.setText("Google\u53D6\u5F97");
+        sync.setText("\u4ECA\u65E5\u540C\u671F");
       }
     };
   }
