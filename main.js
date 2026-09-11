@@ -1163,7 +1163,9 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs,
     removed: 0,
     migrated: 0,
     addedKeys: [],
-    removedKeys: []
+    removedKeys: [],
+    enteredKeys: [],
+    leftKeys: []
   };
   const metadata = await readMetadata(app, folder, year, month);
   const previous = { ...metadata.entries };
@@ -1203,6 +1205,7 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs,
       }
       continue;
     }
+    result.enteredKeys.push(entry.key);
     const adoptable = findEntryLine(lines, entry, claimed);
     if (adoptable !== null) {
       claimed.add(adoptable);
@@ -1216,6 +1219,7 @@ async function applyGoogleEvents(app, folder, year, month, entries, syncedSlugs,
   for (const [key, stored] of Object.entries(previous)) {
     if (wanted.has(key) || !syncedSlugs.includes(keySlug(key)) || !dateInScope(stored.date, scope))
       continue;
+    result.leftKeys.push(key);
     const existingIndex = findStoredLine(lines, stored, claimed);
     if (existingIndex !== null) {
       removals.add(existingIndex);
@@ -1542,6 +1546,8 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
       const failedCalendars = /* @__PURE__ */ new Set();
       const addedKeys = /* @__PURE__ */ new Set();
       const removedKeys = /* @__PURE__ */ new Set();
+      const enteredKeys = /* @__PURE__ */ new Set();
+      const leftKeys = /* @__PURE__ */ new Set();
       const totals = { added: 0, updated: 0, adopted: 0, removed: 0, migrated: 0 };
       while (cursor <= lastMonth) {
         const result = await this.syncGoogleCalendarMonth(accessToken, cursor.getFullYear(), cursor.getMonth() + 1, scope);
@@ -1549,6 +1555,8 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         result.failedCalendars.forEach((calendarId) => failedCalendars.add(calendarId));
         result.sync.addedKeys.forEach((key) => addedKeys.add(key));
         result.sync.removedKeys.forEach((key) => removedKeys.add(key));
+        result.sync.enteredKeys.forEach((key) => enteredKeys.add(key));
+        result.sync.leftKeys.forEach((key) => leftKeys.add(key));
         totals.added += result.sync.added;
         totals.updated += result.sync.updated;
         totals.adopted += result.sync.adopted;
@@ -1557,12 +1565,15 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
         cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       }
       let crossMonthUpdates = 0;
-      for (const key of addedKeys) {
+      for (const key of enteredKeys) {
+        if (!leftKeys.has(key))
+          continue;
+        crossMonthUpdates++;
+        if (addedKeys.has(key))
+          totals.added--;
         if (removedKeys.has(key))
-          crossMonthUpdates++;
+          totals.removed--;
       }
-      totals.added -= crossMonthUpdates;
-      totals.removed -= crossMonthUpdates;
       totals.updated += crossMonthUpdates;
       const failedCalendarCount = failedCalendars.size;
       console.log("[My-system-Techo][Google sync] completed", {
@@ -1637,16 +1648,11 @@ var MySystemTechoPlugin = class extends import_obsidian6.Plugin {
   }
   async addGoogleCalendarEvent(date) {
     try {
-      let targetDate;
-      if (date) {
-        targetDate = this.parseSyncDate(date, "\u65E5\u4ED8");
-      } else {
-        const today = this.isoLocal(/* @__PURE__ */ new Date());
-        const input = await promptText(this.app, "Google Calendar\u3078\u8FFD\u52A0\u3059\u308B\u65E5\u4ED8\uFF08YYYY-MM-DD\uFF09", today);
-        if (input === null)
-          return;
-        targetDate = this.parseSyncDate(input, "\u65E5\u4ED8");
-      }
+      const initialDate = date ? this.parseSyncDate(date, "\u65E5\u4ED8") : this.isoLocal(/* @__PURE__ */ new Date());
+      const dateInput = await promptText(this.app, "Google Calendar\u3078\u8FFD\u52A0\u3059\u308B\u65E5\u4ED8\uFF08YYYY-MM-DD\uFF09", initialDate);
+      if (dateInput === null)
+        return;
+      const targetDate = this.parseSyncDate(dateInput, "\u65E5\u4ED8");
       const title = await promptText(this.app, `${targetDate} \u306BGoogle Calendar\u3078\u8FFD\u52A0\u3059\u308B\u4E88\u5B9A\u306E\u30BF\u30A4\u30C8\u30EB`);
       if (!title?.trim())
         return;
