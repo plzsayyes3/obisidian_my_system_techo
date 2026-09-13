@@ -951,7 +951,8 @@ var TechoView = class extends import_obsidian4.ItemView {
         this.renderItem(body, item);
       this.dayActions(head, date);
     }
-    const undated = await readUndatedItems(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
+    const [ownerYear, ownerMonth] = monday.split("-").map(Number);
+    const undated = await readUndatedItems(this.app, this.plugin.settings.sourceFolder, ownerYear, ownerMonth);
     this.renderUndated(root, undated.filter((item) => item.week === week));
   }
   // --- year ----------------------------------------------------------------
