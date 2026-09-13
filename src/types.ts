@@ -40,7 +40,7 @@ export interface MySystemTechoSettings {
 }
 
 export const DEFAULT_SETTINGS: MySystemTechoSettings = {
-  sourceFolder: "techo",
+  sourceFolder: "02_techo",
   scope: "month",
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
