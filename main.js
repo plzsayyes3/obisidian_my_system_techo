@@ -26,7 +26,7 @@ var import_obsidian6 = require("obsidian");
 
 // src/types.ts
 var DEFAULT_SETTINGS = {
-  sourceFolder: "techo",
+  sourceFolder: "02_techo",
   scope: "month",
   year: (/* @__PURE__ */ new Date()).getFullYear(),
   month: (/* @__PURE__ */ new Date()).getMonth() + 1,
