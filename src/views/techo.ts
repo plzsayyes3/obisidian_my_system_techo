@@ -159,8 +159,9 @@ export class TechoView extends ItemView {
       this.dayActions(head, date);
     }
 
-    // Only this week's own 日付未定 / タスク; the month-level ones belong to the month view.
-    const undated = await readUndatedItems(this.app, this.plugin.settings.sourceFolder, this.year, this.month);
+    // Weekly undated items belong to the month containing that week's Monday.
+    const [ownerYear, ownerMonth] = monday.split("-").map(Number);
+    const undated = await readUndatedItems(this.app, this.plugin.settings.sourceFolder, ownerYear, ownerMonth);
     this.renderUndated(root, undated.filter((item) => item.week === week));
   }
 
